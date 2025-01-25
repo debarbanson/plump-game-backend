@@ -31,6 +31,7 @@ const GAME_PHASES = {
   MAKING_PREDICTIONS: 'MAKING_PREDICTIONS',
   SELECTING_TRUMP: 'SELECTING_TRUMP',
   PLAYING: 'PLAYING',
+  PAUSED: 'PAUSED',
   GAME_OVER: 'GAME_OVER'
 };
 
@@ -97,7 +98,7 @@ const games = new Map();
 const playerSockets = new Map();
 const connectedPlayers = new Map();
 const activeConnections = new Map();
-const disconnectedPlayers = new Map(); // Store disconnected players with timestamps
+const disconnectedPlayers = new Map();  // Keep only one instance of each
 
 // New helper function for card validation
 const validatePlay = (game, playerId, card) => {
@@ -676,7 +677,7 @@ io.on('connection', (socket) => {
         playerId: socket.id
       });
 
-      // Don't remove player immediately, mark as disconnected
+      // Mark player as disconnected
       const playerIndex = gameToUpdate.players.findIndex(p => p.id === socket.id);
       if (playerIndex !== -1) {
         gameToUpdate.players[playerIndex].disconnected = true;
@@ -689,24 +690,42 @@ io.on('connection', (socket) => {
         gameToUpdate.message = `Game paused - waiting for ${player.name} to reconnect`;
       }
 
-      // Set a timeout to handle if player doesn't reconnect
-      setTimeout(() => {
-        if (disconnectedPlayers.has(player.name)) {
-          // Player didn't reconnect, now remove them
-          gameToUpdate.players = gameToUpdate.players.filter(p => p.id !== socket.id);
-          disconnectedPlayers.delete(player.name);
-          
-          if (gameToUpdate.players.length < 4) {
-            gameToUpdate.phase = GAME_PHASES.WAITING_FOR_PLAYERS;
-            gameToUpdate.message = 'Waiting for players to rejoin';
-          }
-          
-          io.to(gameToUpdate.gameId).emit('gameStateUpdate', gameToUpdate);
-        }
-      }, 30000); // 30 second window to reconnect
-
       // Notify other players
       io.to(gameToUpdate.gameId).emit('gameStateUpdate', gameToUpdate);
+    }
+  });
+
+  socket.on('rejoinGame', ({ gameId, playerName }) => {
+    console.log(`Rejoin attempt - Game: ${gameId}, Player: ${playerName}`);
+    
+    const game = games.get(gameId);
+    if (game) {
+      // Update player's new socket ID
+      const player = game.players.find(p => p.name === playerName);
+      if (player) {
+        player.id = socket.id;
+        player.disconnected = false;  // Clear disconnected flag
+        
+        // Update tracking maps
+        playerSockets.set(socket.id, { gameId, playerName });
+        connectedPlayers.set(playerName, socket.id);
+        disconnectedPlayers.delete(playerName);  // Remove from disconnected list
+        
+        // Restore game phase if all players reconnected
+        if (game.phase === GAME_PHASES.PAUSED && 
+            !game.players.some(p => p.disconnected)) {
+          game.phase = game.previousPhase;
+          game.message = null;
+        }
+        
+        // Join socket room
+        socket.join(gameId);
+        
+        // Send current game state
+        socket.emit('gameStateUpdate', game);
+        io.to(gameId).emit('gameStateUpdate', game);  // Update all players
+        console.log(`Player ${playerName} rejoined game ${gameId}`);
+      }
     }
   });
 });
