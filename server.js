@@ -99,6 +99,7 @@ const playerSockets = new Map();
 const connectedPlayers = new Map();
 const activeConnections = new Map();
 const disconnectedPlayers = new Map();  // Keep only one instance of each
+const tabConnections = new Map();  // Track which tab belongs to which player
 
 // New helper function for card validation
 const validatePlay = (game, playerId, card) => {
@@ -248,8 +249,11 @@ const startNewRound = (game) => {
 };
 
 io.on('connection', (socket) => {
-  console.log('User connected:', socket.id);
+  console.log('User connected:', socket.id, 'Tab:', socket.handshake.auth.tabId);
   
+  const tabId = socket.handshake.auth.tabId;
+  tabConnections.set(socket.id, tabId);
+
   activeConnections.set(socket.id, { connected: true });
 
   socket.on('createGame', ({ playerName }) => {
@@ -660,7 +664,8 @@ io.on('connection', (socket) => {
   });
 
   socket.on('disconnect', () => {
-    console.log('User disconnected:', socket.id);
+    console.log('User disconnected:', socket.id, 'Tab:', tabConnections.get(socket.id));
+    tabConnections.delete(socket.id);
     
     // Find game this player was in
     const gameToUpdate = [...games.values()].find(game => 
