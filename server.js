@@ -293,41 +293,6 @@ io.on('connection', (socket) => {
   });
 
   socket.on('joinGame', ({ gameId, playerName }) => {
-    // Check if this is a reconnecting player
-    const disconnectedPlayer = disconnectedPlayers.get(playerName);
-    if (disconnectedPlayer && disconnectedPlayer.gameId === gameId) {
-      const game = games.get(gameId);
-      if (game) {
-        // Update the player's socket id
-        const playerIndex = game.players.findIndex(p => p.name === playerName);
-        if (playerIndex !== -1) {
-          game.players[playerIndex].id = socket.id;
-          game.players[playerIndex].disconnected = false;
-        }
-
-        // Remove from disconnected players
-        disconnectedPlayers.delete(playerName);
-
-        // If all players are back, resume the game
-        if (!game.players.some(p => p.disconnected)) {
-          game.phase = game.previousPhase || GAME_PHASES.WAITING_FOR_PLAYERS;
-          delete game.previousPhase;
-          game.message = 'Game resumed';
-        }
-
-        socket.join(gameId);
-        socket.emit('gameJoined', { gameId, gameState: game });
-        io.to(gameId).emit('gameStateUpdate', game);
-        return;
-      }
-    }
-
-    const connectionInfo = activeConnections.get(socket.id);
-    if (connectionInfo && connectionInfo.lastJoinAttempt === `${gameId}-${playerName}`) {
-      console.log('Duplicate join attempt, ignoring');
-      return;
-    }
-    
     console.log(`Join game attempt - Game: ${gameId}, Player: ${playerName}`);
     
     const game = games.get(gameId);
@@ -335,35 +300,25 @@ io.on('connection', (socket) => {
       socket.emit('error', 'Game not found');
       return;
     }
-    
+
     if (game.players.length >= 4) {
       socket.emit('error', 'Game is full');
       return;
     }
-    
-    if (game.phase !== GAME_PHASES.WAITING_FOR_PLAYERS) {
-      socket.emit('error', 'Game already started');
-      return;
-    }
-    
-    if (game.players.some(p => p.name === playerName)) {
-      socket.emit('error', 'Player name already taken');
-      return;
-    }
-    
-    const player = { id: socket.id, name: playerName, isHost: false, score: 0 };
+
+    const player = { id: socket.id, name: playerName, isHost: false };
     game.players.push(player);
     
     playerSockets.set(socket.id, { gameId, playerName });
     connectedPlayers.set(playerName, socket.id);
     
     socket.join(gameId);
-    io.to(gameId).emit('gameStateUpdate', game);
     
-    activeConnections.set(socket.id, {
-      ...connectionInfo,
-      lastJoinAttempt: `${gameId}-${playerName}`
-    });
+    // Emit joinedGame event for the new player
+    socket.emit('joinedGame', game);
+    
+    // Update all players
+    io.to(gameId).emit('gameStateUpdate', game);
   });
 
   socket.on('startGame', ({ gameId }) => {
@@ -710,41 +665,62 @@ io.on('connection', (socket) => {
     const game = games.get(gameId);
     const disconnectedInfo = disconnectedPlayers.get(playerName);
     
-    if (game && disconnectedInfo) {
+    if (game) {
       const player = game.players.find(p => p.name === playerName);
       if (player) {
-        // Restore player state
+        const oldSocketId = player.id;
+        
+        // Update socket ID
         player.id = socket.id;
         player.disconnected = false;
         
-        // Restore game state if needed
-        if (disconnectedInfo.isCurrentPlayer) {
+        // Update all game state references to the old socket ID
+        if (game.currentPlayer === oldSocketId) {
           game.currentPlayer = socket.id;
         }
-        if (disconnectedInfo.isHighestBidder) {
+        if (game.highestBidder === oldSocketId) {
           game.highestBidder = socket.id;
         }
         
-        // Restore player's hand and predictions
-        game.hands[socket.id] = disconnectedInfo.hand;
-        game.predictions[socket.id] = disconnectedInfo.predictions;
+        // Transfer hands and predictions
+        if (game.hands[oldSocketId]) {
+          game.hands[socket.id] = game.hands[oldSocketId];
+          delete game.hands[oldSocketId];
+        }
+        if (game.predictions[oldSocketId]) {
+          game.predictions[socket.id] = game.predictions[oldSocketId];
+          delete game.predictions[oldSocketId];
+        }
+        if (game.tricks[oldSocketId]) {
+          game.tricks[socket.id] = game.tricks[oldSocketId];
+          delete game.tricks[oldSocketId];
+        }
         
-        // Update tracking
+        // Update tracking maps
         playerSockets.set(socket.id, { gameId, playerName });
         connectedPlayers.set(playerName, socket.id);
         disconnectedPlayers.delete(playerName);
         
-        // Resume game if all players back
+        // Resume game if appropriate
         if (game.phase === GAME_PHASES.PAUSED && 
             !game.players.some(p => p.disconnected)) {
           game.phase = game.previousPhase;
           game.message = null;
-          game.pausedDuringTurn = false;
         }
         
         socket.join(gameId);
+        
+        // Send full game state to reconnected player
         socket.emit('gameStateUpdate', game);
+        
+        // Notify all players
         io.to(gameId).emit('gameStateUpdate', game);
+        
+        console.log('Player rejoined successfully:', {
+          playerName,
+          currentPlayer: game.currentPlayerName,
+          phase: game.phase
+        });
       }
     }
   });
