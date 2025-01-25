@@ -667,7 +667,6 @@ io.on('connection', (socket) => {
     console.log('User disconnected:', socket.id, 'Tab:', tabConnections.get(socket.id));
     tabConnections.delete(socket.id);
     
-    // Find game this player was in
     const gameToUpdate = [...games.values()].find(game => 
       game.players.some(p => p.id === socket.id)
     );
@@ -675,11 +674,15 @@ io.on('connection', (socket) => {
     if (gameToUpdate) {
       const player = gameToUpdate.players.find(p => p.id === socket.id);
       
-      // Store disconnected player info
+      // Store more game state info for reconnection
       disconnectedPlayers.set(player.name, {
         gameId: gameToUpdate.gameId,
         timestamp: Date.now(),
-        playerId: socket.id
+        playerId: socket.id,
+        isCurrentPlayer: gameToUpdate.currentPlayer === socket.id,
+        isHighestBidder: gameToUpdate.highestBidder === socket.id,
+        hand: gameToUpdate.hands[socket.id],
+        predictions: gameToUpdate.predictions[socket.id]
       });
 
       // Mark player as disconnected
@@ -688,11 +691,12 @@ io.on('connection', (socket) => {
         gameToUpdate.players[playerIndex].disconnected = true;
       }
 
-      // If game is in progress, pause it
-      if (gameToUpdate.phase !== GAME_PHASES.WAITING_FOR_PLAYERS) {
+      // If it was their turn, temporarily pause the game
+      if (gameToUpdate.currentPlayer === socket.id) {
         gameToUpdate.previousPhase = gameToUpdate.phase;
         gameToUpdate.phase = GAME_PHASES.PAUSED;
         gameToUpdate.message = `Game paused - waiting for ${player.name} to reconnect`;
+        gameToUpdate.pausedDuringTurn = true;
       }
 
       // Notify other players
@@ -704,32 +708,43 @@ io.on('connection', (socket) => {
     console.log(`Rejoin attempt - Game: ${gameId}, Player: ${playerName}`);
     
     const game = games.get(gameId);
-    if (game) {
-      // Update player's new socket ID
+    const disconnectedInfo = disconnectedPlayers.get(playerName);
+    
+    if (game && disconnectedInfo) {
       const player = game.players.find(p => p.name === playerName);
       if (player) {
+        // Restore player state
         player.id = socket.id;
-        player.disconnected = false;  // Clear disconnected flag
+        player.disconnected = false;
         
-        // Update tracking maps
+        // Restore game state if needed
+        if (disconnectedInfo.isCurrentPlayer) {
+          game.currentPlayer = socket.id;
+        }
+        if (disconnectedInfo.isHighestBidder) {
+          game.highestBidder = socket.id;
+        }
+        
+        // Restore player's hand and predictions
+        game.hands[socket.id] = disconnectedInfo.hand;
+        game.predictions[socket.id] = disconnectedInfo.predictions;
+        
+        // Update tracking
         playerSockets.set(socket.id, { gameId, playerName });
         connectedPlayers.set(playerName, socket.id);
-        disconnectedPlayers.delete(playerName);  // Remove from disconnected list
+        disconnectedPlayers.delete(playerName);
         
-        // Restore game phase if all players reconnected
+        // Resume game if all players back
         if (game.phase === GAME_PHASES.PAUSED && 
             !game.players.some(p => p.disconnected)) {
           game.phase = game.previousPhase;
           game.message = null;
+          game.pausedDuringTurn = false;
         }
         
-        // Join socket room
         socket.join(gameId);
-        
-        // Send current game state
         socket.emit('gameStateUpdate', game);
-        io.to(gameId).emit('gameStateUpdate', game);  // Update all players
-        console.log(`Player ${playerName} rejoined game ${gameId}`);
+        io.to(gameId).emit('gameStateUpdate', game);
       }
     }
   });
