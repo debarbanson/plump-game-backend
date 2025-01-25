@@ -12,7 +12,8 @@ const io = new Server(server, {
       "http://localhost:3000",
       "https://plump-game-backend.onrender.com",
       "https://debdc.nl",
-      "http://debdc.nl"
+      "http://debdc.nl",
+      "https://debdc.nl/playplump"
     ],
     methods: ["GET", "POST"]
   }
