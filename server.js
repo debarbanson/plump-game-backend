@@ -13,7 +13,10 @@ const io = new Server(server, {
       "https://plump-game-backend.onrender.com",
       "https://debdc.nl",
       "http://debdc.nl",
-      "https://debdc.nl/playplump"
+      "https://www.debdc.nl",
+      "http://www.debdc.nl",
+      "https://debdc.nl/playplump",
+      "https://www.debdc.nl/playplump"
     ],
     methods: ["GET", "POST"]
   }
