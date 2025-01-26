@@ -1,4 +1,5 @@
 require('dotenv').config();
+// Added backup version - latest working version with all game logic and socket handling
 const express = require('express');
 const http = require('http');
 const { Server } = require('socket.io');
