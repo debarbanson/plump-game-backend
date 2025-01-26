@@ -345,75 +345,50 @@ io.on('connection', (socket) => {
 
   socket.on('makePrediction', ({ gameId, prediction }) => {
     const game = games.get(gameId);
-    if (!game || game.phase !== GAME_PHASES.MAKING_PREDICTIONS) return;
+    if (!game) return;
 
-    if (socket.id !== game.currentPlayer) {
-      socket.emit('error', 'Not your turn');
-      return;
-    }
-
-    // Only validate the last predictor to prevent total equaling number of tricks
-    const isLastPredictor = Object.keys(game.predictions).length === 3;
-    if (isLastPredictor) {
-      const predictionsSum = Object.values(game.predictions).reduce((sum, pred) => sum + pred, 0);
-      if ((predictionsSum + prediction) === game.cardsPerPlayer) {
-        socket.emit('error', `Your prediction cannot make the total equal ${game.cardsPerPlayer}`);
-        return;
-      }
-    }
-
-    console.log(`Player ${socket.id} made prediction: ${prediction}`);
     game.predictions[socket.id] = prediction;
-
+    
+    // Find next player
+    const currentPlayerIndex = game.players.findIndex(p => p.id === socket.id);
+    const nextPlayerIndex = getNextPlayerIndex(currentPlayerIndex, game.players);
+    
+    // Check if all predictions are made
     if (Object.keys(game.predictions).length === 4) {
-      if (game.roundNumber >= 13 && game.roundNumber <= 16) {
-        // Now reveal each player's own card
-        game.players.forEach((player) => {
-          io.to(player.id).emit('dealCards', game.hands[player.id]);
-        });
-        
-        // Find first player who predicted 1, or current player if all predicted 0
-        let startingPlayer = null;
-        for (const [playerId, pred] of Object.entries(game.predictions)) {
-          if (pred === 1) {
-            startingPlayer = playerId;
-            break;
-          }
+      // Find highest prediction
+      let highestBid = -1;
+      let highestBidder = null;
+      
+      Object.entries(game.predictions).forEach(([playerId, pred]) => {
+        if (Number(pred) > highestBid) {
+          highestBid = Number(pred);
+          highestBidder = playerId;
         }
-        // If no one predicted 1, use current player
-        if (!startingPlayer) {
-          startingPlayer = game.currentPlayer;
-        }
+      });
+      
+      console.log('All predictions made:', {
+        predictions: game.predictions,
+        highestBidder,
+        highestBid
+      });
 
-        game.phase = GAME_PHASES.PLAYING;
-        game.currentPlayer = startingPlayer;
-        game.currentPlayerName = game.players.find(p => p.id === startingPlayer).name;
-        game.highestBidder = startingPlayer;
-      } else {
-        // Normal rounds - proceed to trump selection
-        let highestPrediction = -1;
-        let trumpSelector = null;
-        
-        Object.entries(game.predictions).forEach(([playerId, pred]) => {
-          if (pred > highestPrediction) {
-            highestPrediction = pred;
-            trumpSelector = playerId;
-          }
-        });
-        
-        game.phase = GAME_PHASES.SELECTING_TRUMP;
-        game.currentPlayer = trumpSelector;
-        game.currentPlayerName = game.players.find(p => p.id === trumpSelector).name;
-        game.highestBidder = trumpSelector;
-      }
+      game.phase = GAME_PHASES.SELECTING_TRUMP;
+      game.currentPlayer = highestBidder;
+      game.currentPlayerName = game.players.find(p => p.id === highestBidder).name;
+      game.highestBidder = highestBidder;
+      
+      console.log('Moving to trump selection:', {
+        phase: game.phase,
+        currentPlayer: game.currentPlayerName,
+        highestBidder: game.highestBidder
+      });
     } else {
-      const currentPlayerIndex = game.players.findIndex(p => p.id === socket.id);
-      const nextPlayerIndex = getNextPlayerIndex(currentPlayerIndex, game.players);
+      // Move to next player
       game.currentPlayer = game.players[nextPlayerIndex].id;
       game.currentPlayerName = game.players[nextPlayerIndex].name;
     }
 
-    io.to(gameId).emit('gameStateUpdate', game);
+    io.to(gameId).emit('gameStateUpdate', getGameState(game));
   });
 
   socket.on('selectTrump', ({ gameId, suit }) => {
