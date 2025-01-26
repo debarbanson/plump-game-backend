@@ -27,6 +27,33 @@ const io = new Server(server, {
 // Game constants and utilities
 const SUITS = ['hearts', 'diamonds', 'clubs', 'spades'];
 const VALUES = ['2', '3', '4', '5', '6', '7', '8', '9', '10', 'J', 'Q', 'K', 'A'];
+
+// Helper function for getting clean game state
+const getGameState = (game) => {
+  return {
+    gameId: game.gameId,
+    phase: game.phase,
+    players: game.players,
+    scores: game.scores,
+    plumps: game.plumps,
+    predictions: game.predictions,
+    tricks: game.tricks,
+    roundNumber: game.roundNumber,
+    cardsPerPlayer: game.cardsPerPlayer,
+    currentPlayer: game.currentPlayer,
+    currentPlayerName: game.currentPlayerName,
+    dealer: game.dealer,
+    dealerId: game.dealerId,
+    trumpSuit: game.trumpSuit,
+    leadSuit: game.leadSuit,
+    currentTrick: game.currentTrick,
+    isEvaluatingTrick: game.isEvaluatingTrick,
+    trickWinner: game.trickWinner,
+    highestBidder: game.highestBidder,
+    message: game.message
+  };
+};
+
 const GAME_PHASES = {
   WAITING_FOR_PLAYERS: 'WAITING_FOR_PLAYERS',
   DEALING: 'DEALING',
@@ -620,18 +647,29 @@ io.on('connection', (socket) => {
         return;
       }
 
+      // Get the old socket ID before updating
+      const oldSocketId = player.id;
+      
       // Update socket id
       player.id = socket.id;
+      
+      // Transfer the hand from old socket ID to new one
+      if (game.hands && game.hands[oldSocketId]) {
+        game.hands[socket.id] = game.hands[oldSocketId];
+        delete game.hands[oldSocketId];
+      }
+      
+      // Join the game room
+      socket.join(gameId);
       
       // Send current game state
       socket.emit('gameStateUpdate', getGameState(game));
       
-      // Add this: Resend the player's cards
+      // Send the player's cards
       if (game.hands && game.hands[socket.id]) {
         socket.emit('dealCards', game.hands[socket.id]);
       }
 
-      // Log successful rejoin
       console.log('Player rejoined successfully:', {
         playerName,
         currentPlayer: game.currentPlayerName,
