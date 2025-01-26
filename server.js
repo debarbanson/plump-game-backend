@@ -257,39 +257,35 @@ io.on('connection', (socket) => {
   activeConnections.set(socket.id, { connected: true });
 
   socket.on('createGame', ({ playerName }) => {
-    console.log(`Create game attempt - Player: ${playerName}`);
-    
+    console.log('Create game attempt - Player:', playerName);
     const gameId = generateGameId();
-    const player = { id: socket.id, name: playerName, isHost: true, score: 0 };
-    
-    const gameState = {
+    const game = {
       gameId,
-      players: [player],
       phase: GAME_PHASES.WAITING_FOR_PLAYERS,
-      currentPlayer: null,
-      currentPlayerName: null,
-      dealer: playerName,
-      dealerId: socket.id,
-      roundNumber: 1,
-      cardsPerPlayer: 1,
+      players: [{ id: socket.id, name: playerName, isHost: true }],
+      scores: {},
+      plumps: {},  // Initialize plumps object
+      hands: {},
       predictions: {},
       tricks: {},
-      scores: {},
-      hands: {},  // New: track player hands
+      roundNumber: 0,
+      cardsPerPlayer: 0,
+      currentPlayer: null,
+      currentPlayerName: null,
+      dealer: null,
       trumpSuit: null,
       leadSuit: null,
       currentTrick: [],
-      message: null,
-      highestBidder: null,
       isEvaluatingTrick: false
     };
-    
-    games.set(gameId, gameState);
-    playerSockets.set(socket.id, { gameId, playerName });
-    connectedPlayers.set(playerName, socket.id);
-    
+
+    // Initialize scores and plumps for the first player
+    game.scores[socket.id] = 0;
+    game.plumps[socket.id] = 0;  // Initialize plumps counter
+
+    games.set(gameId, game);
     socket.join(gameId);
-    socket.emit('gameCreated', gameState);
+    socket.emit('gameCreated', game);
   });
 
   socket.on('joinGame', ({ gameId, playerName }) => {
@@ -308,6 +304,10 @@ io.on('connection', (socket) => {
 
     const player = { id: socket.id, name: playerName, isHost: false };
     game.players.push(player);
+    
+    // Initialize scores and plumps for the new player
+    game.scores[socket.id] = 0;
+    game.plumps[socket.id] = 0;  // Initialize plumps counter
     
     playerSockets.set(socket.id, { gameId, playerName });
     connectedPlayers.set(playerName, socket.id);
@@ -539,45 +539,25 @@ io.on('connection', (socket) => {
           });
 
           game.players.forEach(player => {
-            const trickCount = game.tricks[player.id] || 0;  // Ensure we get 0 if undefined
+            const trickCount = game.tricks[player.id] || 0;
             const prediction = game.predictions[player.id];
             
-            console.log('Checking player score:', {
-              playerName: player.name,
-              playerId: player.id,
-              prediction: prediction,
-              trickCount: trickCount,
-              isEqual: Number(trickCount) === Number(prediction)
-            });
-
             if (Number(trickCount) === Number(prediction)) {
               let points;
-              
-              // Rule 1: For predictions 10-13, multiply by 10
               if (prediction >= 10 && prediction <= 13) {
                 points = prediction * 10;
-              } 
-              // Rule 2: For predictions 0-9, prediction + 10
-              else {
+              } else {
                 points = Number(prediction) + 10;
               }
-
-              console.log('Scoring calculation:', {
-                player: player.name,
-                prediction: prediction,
-                trickCount: trickCount,
-                points: points,
-                rule: prediction >= 10 ? `${prediction} × 10 = ${points}` : `${prediction} + 10 = ${points}`
-              });
-
               game.scores[player.id] = (game.scores[player.id] || 0) + points;
-              
-              // Log after scoring
-              console.log('Points awarded:', {
+            } else {
+              // Player got a plump - increment their plump counter
+              game.plumps[player.id] = (game.plumps[player.id] || 0) + 1;
+              console.log('Plump recorded:', {
                 playerName: player.name,
-                oldScore: game.scores[player.id] - points,
-                pointsAwarded: points,
-                newScore: game.scores[player.id]
+                prediction: prediction,
+                actualTricks: trickCount,
+                totalPlumps: game.plumps[player.id]
               });
             }
           });
