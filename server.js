@@ -658,12 +658,25 @@ io.on('connection', (socket) => {
         game.hands[socket.id] = game.hands[oldSocketId];
         delete game.hands[oldSocketId];
       }
+
+      // Mark player as reconnected
+      player.disconnected = false;
+      
+      // Check if all players are now connected
+      const allConnected = !game.players.some(p => p.disconnected);
+      
+      // If all players are connected and game was paused, resume it
+      if (allConnected && game.phase === GAME_PHASES.PAUSED && game.previousPhase) {
+        game.phase = game.previousPhase;
+        game.previousPhase = null;
+        game.message = null;
+      }
       
       // Join the game room
       socket.join(gameId);
       
-      // Send current game state
-      socket.emit('gameStateUpdate', getGameState(game));
+      // Send current game state to all players
+      io.to(gameId).emit('gameStateUpdate', getGameState(game));
       
       // Send the player's cards
       if (game.hands && game.hands[socket.id]) {
@@ -673,7 +686,8 @@ io.on('connection', (socket) => {
       console.log('Player rejoined successfully:', {
         playerName,
         currentPlayer: game.currentPlayerName,
-        phase: game.phase
+        phase: game.phase,
+        allPlayersConnected: allConnected
       });
 
     } catch (error) {
