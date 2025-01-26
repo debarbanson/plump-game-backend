@@ -30,6 +30,9 @@ const VALUES = ['2', '3', '4', '5', '6', '7', '8', '9', '10', 'J', 'Q', 'K', 'A'
 
 // Helper function for getting clean game state
 const getGameState = (game) => {
+  // Returns a clean copy of game state without circular references
+  // Used for sending game state to clients and handling reconnections
+  // Added proper handling for game resumption from paused state
   return {
     gameId: game.gameId,
     phase: game.phase,
