@@ -345,8 +345,24 @@ io.on('connection', (socket) => {
 
   socket.on('makePrediction', ({ gameId, prediction }) => {
     const game = games.get(gameId);
-    if (!game) return;
+    if (!game || game.phase !== GAME_PHASES.MAKING_PREDICTIONS) return;
 
+    if (socket.id !== game.currentPlayer) {
+      socket.emit('error', 'Not your turn');
+      return;
+    }
+
+    // Only validate the last predictor
+    const isLastPredictor = Object.keys(game.predictions).length === 3;
+    if (isLastPredictor) {
+      const predictionsSum = Object.values(game.predictions).reduce((sum, pred) => sum + pred, 0);
+      if ((predictionsSum + prediction) === game.cardsPerPlayer) {
+        socket.emit('error', `Your prediction cannot make the total equal ${game.cardsPerPlayer}`);
+        return;
+      }
+    }
+
+    console.log(`Player ${socket.id} made prediction: ${prediction}`);
     game.predictions[socket.id] = prediction;
     
     // Find next player
@@ -628,10 +644,8 @@ io.on('connection', (socket) => {
       // Get the old socket ID before updating
       const oldSocketId = player.id;
       
-      // Update socket id
+      // Update socket id and references
       player.id = socket.id;
-      
-      // Update all references to the old socket ID
       if (game.currentPlayer === oldSocketId) {
         game.currentPlayer = socket.id;
       }
@@ -639,45 +653,26 @@ io.on('connection', (socket) => {
         game.highestBidder = socket.id;
       }
       
-      // Transfer the hand from old socket ID to new one
+      // Transfer the hand
       if (game.hands && game.hands[oldSocketId]) {
         game.hands[socket.id] = game.hands[oldSocketId];
         delete game.hands[oldSocketId];
       }
 
-      // Mark player as reconnected
+      // Handle reconnection
       player.disconnected = false;
-      
-      // Check if all players are now connected
       const allConnected = !game.players.some(p => p.disconnected);
-      
-      // If all players are connected and game was paused, resume it
       if (allConnected && game.phase === GAME_PHASES.PAUSED && game.previousPhase) {
         game.phase = game.previousPhase;
         game.previousPhase = null;
         game.message = null;
       }
       
-      // Join the game room
       socket.join(gameId);
-      
-      // Send current game state to all players
       io.to(gameId).emit('gameStateUpdate', getGameState(game));
-      
-      // Send the player's cards
       if (game.hands && game.hands[socket.id]) {
         socket.emit('dealCards', game.hands[socket.id]);
       }
-
-      console.log('Player rejoined successfully:', {
-        playerName,
-        currentPlayer: game.currentPlayerName,
-        phase: game.phase,
-        allPlayersConnected: allConnected,
-        isCurrentPlayer: game.currentPlayer === socket.id,
-        isHighestBidder: game.highestBidder === socket.id
-      });
-
     } catch (error) {
       console.error('Error in rejoinGame:', error);
       socket.emit('error', 'Failed to rejoin game');
