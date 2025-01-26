@@ -1,7 +1,9 @@
+require('dotenv').config();
 const express = require('express');
 const http = require('http');
 const { Server } = require('socket.io');
 const cors = require('cors');
+const sgMail = require('@sendgrid/mail');
 
 const app = express();
 app.use(cors());
@@ -520,6 +522,17 @@ io.on('connection', (socket) => {
           if (game.roundNumber === 28) {
             game.phase = GAME_PHASES.GAME_OVER;
             game.message = 'Game Over!';
+            
+            // Create results table
+            const resultsTable = game.players.map(player => ({
+              playerName: player.name,
+              score: game.scores[player.id] || 0,
+              plumps: game.plumps[player.id] || 0,
+              date: new Date().toISOString()
+            }));
+
+            // Send email with results
+            sendGameResults(resultsTable);
           } else {
             startNewRound(game);
           }
@@ -658,6 +671,87 @@ io.on('connection', (socket) => {
       }
     }
   });
+});
+
+sgMail.setApiKey(process.env.SENDGRID_API_KEY);
+
+async function sendGameResults(results) {
+  // Sort players by score to determine rank
+  const sortedResults = [...results].sort((a, b) => b.score - a.score);
+  
+  // Add rank to each player
+  const rankedResults = sortedResults.map((result, index) => ({
+    ...result,
+    rank: index + 1
+  }));
+
+  const htmlTable = `
+    <table border="1" cellpadding="5" cellspacing="0" style="border-collapse: collapse;">
+      <tr style="background-color: #f2f2f2;">
+        <th>Name</th>
+        <th>Score</th>
+        <th>Plumps</th>
+        <th>Rank</th>
+      </tr>
+      ${rankedResults.map(r => `
+        <tr>
+          <td>${r.playerName}</td>
+          <td>${r.score}</td>
+          <td>${r.plumps}</td>
+          <td>${r.rank}</td>
+        </tr>
+      `).join('')}
+    </table>
+  `;
+
+  try {
+    await sgMail.send({
+      to: 'debarbancon@debdc.nl',
+      from: process.env.SENDGRID_VERIFIED_SENDER,
+      subject: 'Plump results',
+      html: htmlTable
+    });
+    console.log('Game results email sent successfully');
+  } catch (error) {
+    console.error('Error sending game results email:', error.response ? error.response.body : error);
+  }
+}
+
+// Add an endpoint that Power Automate can poll
+app.get('/api/game-results', (req, res) => {
+  const results = [];
+  games.forEach(game => {
+    if (game.phase === GAME_PHASES.GAME_OVER) {
+      game.players.forEach(player => {
+        results.push({
+          playerName: player.name,
+          score: game.scores[player.id] || 0,
+          plumps: game.plumps[player.id] || 0,
+          gameId: game.gameId,
+          date: new Date().toISOString()
+        });
+      });
+    }
+  });
+  res.json(results);
+});
+
+// Add this after your other endpoints
+app.get('/test-email', async (req, res) => {
+  try {
+    const testResults = [{
+      playerName: 'Test Player',
+      score: 100,
+      plumps: 5,
+      date: new Date().toISOString()
+    }];
+    
+    await sendGameResults(testResults);
+    res.json({ message: 'Test email sent successfully' });
+  } catch (error) {
+    console.error('Error sending test email:', error);
+    res.status(500).json({ error: 'Failed to send test email' });
+  }
 });
 
 const PORT = process.env.PORT || 3001;
