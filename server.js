@@ -706,7 +706,7 @@ async function sendGameResults(results) {
 
   try {
     await sgMail.send({
-      to: 'debarbancon@debdc.nl',
+      to: 'debarbanson@debdc.nl',
       from: process.env.SENDGRID_VERIFIED_SENDER,
       subject: 'Plump results',
       html: htmlTable
