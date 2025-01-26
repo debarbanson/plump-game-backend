@@ -352,17 +352,6 @@ io.on('connection', (socket) => {
       return;
     }
 
-    // Only validate the last predictor
-    const isLastPredictor = Object.keys(game.predictions).length === 3;
-    if (isLastPredictor) {
-      const predictionsSum = Object.values(game.predictions).reduce((sum, pred) => sum + pred, 0);
-      if ((predictionsSum + prediction) === game.cardsPerPlayer) {
-        socket.emit('error', `Your prediction cannot make the total equal ${game.cardsPerPlayer}`);
-        return;
-      }
-    }
-
-    console.log(`Player ${socket.id} made prediction: ${prediction}`);
     game.predictions[socket.id] = prediction;
     
     // Find next player
@@ -371,7 +360,6 @@ io.on('connection', (socket) => {
     
     // Check if all predictions are made
     if (Object.keys(game.predictions).length === 4) {
-      // Find highest prediction
       let highestBid = -1;
       let highestBidder = null;
       
@@ -381,25 +369,12 @@ io.on('connection', (socket) => {
           highestBidder = playerId;
         }
       });
-      
-      console.log('All predictions made:', {
-        predictions: game.predictions,
-        highestBidder,
-        highestBid
-      });
 
       game.phase = GAME_PHASES.SELECTING_TRUMP;
       game.currentPlayer = highestBidder;
       game.currentPlayerName = game.players.find(p => p.id === highestBidder).name;
       game.highestBidder = highestBidder;
-      
-      console.log('Moving to trump selection:', {
-        phase: game.phase,
-        currentPlayer: game.currentPlayerName,
-        highestBidder: game.highestBidder
-      });
     } else {
-      // Move to next player
       game.currentPlayer = game.players[nextPlayerIndex].id;
       game.currentPlayerName = game.players[nextPlayerIndex].name;
     }
