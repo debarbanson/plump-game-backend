@@ -167,85 +167,38 @@ const evaluateTrick = (trick, trumpSuit, leadSuit) => {
 
 // Helper function to start a new round
 const startNewRound = (game) => {
+  // Rotate dealer to next player
+  const currentDealerIndex = game.players.findIndex(p => p.id === game.dealerId);
+  const nextDealerIndex = getNextPlayerIndex(currentDealerIndex, game.players);
+  
+  // Update dealer info
+  game.dealerId = game.players[nextDealerIndex].id;
+  game.dealer = game.players[nextDealerIndex].name;
+
   game.roundNumber++;
-  game.phase = GAME_PHASES.DEALING;
-  game.tricks = {};
-  game.predictions = {};
+  game.cardsPerPlayer = 13;
   game.trumpSuit = null;
   game.leadSuit = null;
   game.currentTrick = [];
-  game.highestBidder = null;
-
-  // Calculate cards for this round
-  if (game.roundNumber <= 13) {
-    game.cardsPerPlayer = 14 - game.roundNumber; // 13,12,11...2,1
-  } else if (game.roundNumber <= 16) {
-    game.cardsPerPlayer = 1; // Four rounds of 1 (rounds 13,14,15,16)
-  } else {
-    game.cardsPerPlayer = game.roundNumber - 15; // 2,3,4...12,13
-  }
+  game.predictions = {};
+  game.tricks = {};
+  game.isEvaluatingTrick = false;
 
   // Deal new cards
   const deck = shuffleDeck(createDeck());
   const hands = dealCards(deck, 4, game.cardsPerPlayer);
-
-  // Validate hands before assigning
-  const handSizes = hands.map(hand => hand.length);
-  if (handSizes.some(size => size !== game.cardsPerPlayer)) {
-    console.error('Invalid deal detected:', {
-      round: game.roundNumber,
-      expectedCards: game.cardsPerPlayer,
-      actualSizes: handSizes
-    });
-    // Retry the deal
-    const newHands = dealCards(shuffleDeck(createDeck()), 4, game.cardsPerPlayer);
-    if (newHands.every(hand => hand.length === game.cardsPerPlayer)) {
-      hands = newHands;
-    }
-  }
-
-  game.hands = {};
-  if (game.roundNumber >= 13 && game.roundNumber <= 16) {
-    // For 1-card rounds, each player only sees others' cards initially
-    game.players.forEach((player, index) => {
-      // Store the actual hand
-      game.hands[player.id] = hands[index];
-      
-      // Send other players' cards to this player
-      const visibleCards = game.players.map((p, i) => {
-        if (p.id !== player.id) {
-          return { playerId: p.id, card: hands[i][0] };
-        }
-        return null;
-      }).filter(Boolean);
-
-      // Only send visible cards initially, own card will be sent after predictions
-      io.to(player.id).emit('dealVisibleCards', visibleCards);
-    });
-  } else {
-    // Normal rounds - players see their own cards
-    game.players.forEach((player, index) => {
-      game.hands[player.id] = hands[index];
-      io.to(player.id).emit('dealCards', hands[index]);
-    });
-  }
-
-  // Set first player (after dealer) for predictions
-  const currentDealerIndex = game.players.findIndex(p => p.id === game.dealerId);
-  const nextDealerIndex = getNextPlayerIndex(currentDealerIndex, game.players);
-  game.dealerId = game.players[nextDealerIndex].id;
-  game.dealer = game.players[nextDealerIndex].name;
-
-  const firstPlayerIndex = getNextPlayerIndex(nextDealerIndex, game.players);
-  game.currentPlayer = game.players[firstPlayerIndex].id;
-  game.currentPlayerName = game.players[firstPlayerIndex].name;
-  game.phase = GAME_PHASES.MAKING_PREDICTIONS;
-
-  // Initialize tricks for all players
-  game.tricks = {};
-  game.players.forEach(player => {
-    game.tricks[player.id] = 0;  // Initialize all players with 0 tricks
+  
+  game.players.forEach((player, index) => {
+    game.hands[player.id] = hands[index];
+    game.tricks[player.id] = 0;  // Initialize tricks
+    io.to(player.id).emit('dealCards', hands[index]);
   });
+
+  // Set first predictor (player after dealer)
+  const firstPredictorIndex = getNextPlayerIndex(nextDealerIndex, game.players);
+  game.currentPlayer = game.players[firstPredictorIndex].id;
+  game.currentPlayerName = game.players[firstPredictorIndex].name;
+  game.phase = GAME_PHASES.MAKING_PREDICTIONS;
 };
 
 io.on('connection', (socket) => {
@@ -264,7 +217,7 @@ io.on('connection', (socket) => {
       phase: GAME_PHASES.WAITING_FOR_PLAYERS,
       players: [{ id: socket.id, name: playerName, isHost: true }],
       scores: {},
-      plumps: {},  // Initialize plumps object
+      plumps: {},
       hands: {},
       predictions: {},
       tricks: {},
@@ -272,7 +225,8 @@ io.on('connection', (socket) => {
       cardsPerPlayer: 0,
       currentPlayer: null,
       currentPlayerName: null,
-      dealer: null,
+      dealer: playerName,        // Set initial dealer
+      dealerId: socket.id,       // Store dealer's socket ID
       trumpSuit: null,
       leadSuit: null,
       currentTrick: [],
@@ -281,7 +235,7 @@ io.on('connection', (socket) => {
 
     // Initialize scores and plumps for the first player
     game.scores[socket.id] = 0;
-    game.plumps[socket.id] = 0;  // Initialize plumps counter
+    game.plumps[socket.id] = 0;
 
     games.set(gameId, game);
     socket.join(gameId);
@@ -336,7 +290,6 @@ io.on('connection', (socket) => {
     game.tricks = {};
     game.scores = {};
     game.hands = {};
-    game.highestBidder = null;
 
     const deck = shuffleDeck(createDeck());
     const hands = dealCards(deck, 4, game.cardsPerPlayer);
@@ -346,6 +299,7 @@ io.on('connection', (socket) => {
       io.to(player.id).emit('dealCards', hands[index]);
     });
 
+    // Find dealer index and set first predictor (player after dealer)
     const dealerIndex = game.players.findIndex(p => p.id === game.dealerId);
     const firstPredictorIndex = getNextPlayerIndex(dealerIndex, game.players);
     
