@@ -656,6 +656,14 @@ io.on('connection', (socket) => {
       // Update socket id
       player.id = socket.id;
       
+      // Update all references to the old socket ID
+      if (game.currentPlayer === oldSocketId) {
+        game.currentPlayer = socket.id;
+      }
+      if (game.highestBidder === oldSocketId) {
+        game.highestBidder = socket.id;
+      }
+      
       // Transfer the hand from old socket ID to new one
       if (game.hands && game.hands[oldSocketId]) {
         game.hands[socket.id] = game.hands[oldSocketId];
@@ -690,7 +698,9 @@ io.on('connection', (socket) => {
         playerName,
         currentPlayer: game.currentPlayerName,
         phase: game.phase,
-        allPlayersConnected: allConnected
+        allPlayersConnected: allConnected,
+        isCurrentPlayer: game.currentPlayer === socket.id,
+        isHighestBidder: game.highestBidder === socket.id
       });
 
     } catch (error) {
