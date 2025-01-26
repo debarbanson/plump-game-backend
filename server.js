@@ -607,68 +607,40 @@ io.on('connection', (socket) => {
   });
 
   socket.on('rejoinGame', ({ gameId, playerName }) => {
-    console.log(`Rejoin attempt - Game: ${gameId}, Player: ${playerName}`);
-    
-    const game = games.get(gameId);
-    const disconnectedInfo = disconnectedPlayers.get(playerName);
-    
-    if (game) {
-      const player = game.players.find(p => p.name === playerName);
-      if (player) {
-        const oldSocketId = player.id;
-        
-        // Update socket ID
-        player.id = socket.id;
-        player.disconnected = false;
-        
-        // Update all game state references to the old socket ID
-        if (game.currentPlayer === oldSocketId) {
-          game.currentPlayer = socket.id;
-        }
-        if (game.highestBidder === oldSocketId) {
-          game.highestBidder = socket.id;
-        }
-        
-        // Transfer hands and predictions
-        if (game.hands[oldSocketId]) {
-          game.hands[socket.id] = game.hands[oldSocketId];
-          delete game.hands[oldSocketId];
-        }
-        if (game.predictions[oldSocketId]) {
-          game.predictions[socket.id] = game.predictions[oldSocketId];
-          delete game.predictions[oldSocketId];
-        }
-        if (game.tricks[oldSocketId]) {
-          game.tricks[socket.id] = game.tricks[oldSocketId];
-          delete game.tricks[oldSocketId];
-        }
-        
-        // Update tracking maps
-        playerSockets.set(socket.id, { gameId, playerName });
-        connectedPlayers.set(playerName, socket.id);
-        disconnectedPlayers.delete(playerName);
-        
-        // Resume game if appropriate
-        if (game.phase === GAME_PHASES.PAUSED && 
-            !game.players.some(p => p.disconnected)) {
-          game.phase = game.previousPhase;
-          game.message = null;
-        }
-        
-        socket.join(gameId);
-        
-        // Send full game state to reconnected player
-        socket.emit('gameStateUpdate', game);
-        
-        // Notify all players
-        io.to(gameId).emit('gameStateUpdate', game);
-        
-        console.log('Player rejoined successfully:', {
-          playerName,
-          currentPlayer: game.currentPlayerName,
-          phase: game.phase
-        });
+    try {
+      const game = games.get(gameId);
+      if (!game) {
+        socket.emit('error', 'Game not found');
+        return;
       }
+
+      const player = game.players.find(p => p.name === playerName);
+      if (!player) {
+        socket.emit('error', 'Player not found');
+        return;
+      }
+
+      // Update socket id
+      player.id = socket.id;
+      
+      // Send current game state
+      socket.emit('gameStateUpdate', getGameState(game));
+      
+      // Add this: Resend the player's cards
+      if (game.hands && game.hands[socket.id]) {
+        socket.emit('dealCards', game.hands[socket.id]);
+      }
+
+      // Log successful rejoin
+      console.log('Player rejoined successfully:', {
+        playerName,
+        currentPlayer: game.currentPlayerName,
+        phase: game.phase
+      });
+
+    } catch (error) {
+      console.error('Error in rejoinGame:', error);
+      socket.emit('error', 'Failed to rejoin game');
     }
   });
 });
