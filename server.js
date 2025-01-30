@@ -169,8 +169,49 @@ const getCardValue = (value) => {
   return valueOrder[value] || parseInt(value);
 };
 
-// Updated evaluateTrick function
-const evaluateTrick = (trick, trumpSuit, leadSuit) => {
+// Add this helper function
+const getHighestBidder = (game) => {
+  let highestBid = -1;
+  let highestBidder = null;
+
+  Object.entries(game.predictions).forEach(([playerId, prediction]) => {
+    if (prediction > highestBid) {
+      highestBid = prediction;
+      highestBidder = playerId;
+    }
+  });
+
+  // If no one bid (all 0s), return first player after dealer
+  if (highestBid === 0 || !highestBidder) {
+    const dealerIndex = game.players.findIndex(p => p.id === game.dealerId);
+    const firstPlayerIndex = getNextPlayerIndex(dealerIndex, game.players);
+    return game.players[firstPlayerIndex].id;
+  }
+
+  return highestBidder;
+};
+
+// Modify the evaluateTrick function for single-card rounds
+const evaluateTrick = (trick, trumpSuit, leadSuit, roundNumber) => {
+  if (isSingleCardRound(roundNumber)) {
+    // In single-card rounds, highest card of lead suit wins
+    return trick.reduce((winner, play) => {
+      if (!winner) return play;
+
+      const winningCard = winner.card;
+      const playedCard = play.card;
+      
+      if (playedCard.suit === leadSuit && 
+         (winningCard.suit !== leadSuit || 
+          getCardValue(playedCard.value) > getCardValue(winningCard.value))) {
+        return play;
+      }
+
+      return winner;
+    });
+  }
+
+  // Existing evaluation logic for normal rounds
   return trick.reduce((winner, play) => {
     if (!winner) return play;
 
@@ -239,6 +280,10 @@ const startNewRound = (game) => {
   const hands = dealCards(deck, 4, game.cardsPerPlayer);
   
   if (isSingleCardRound(game.roundNumber)) {
+    // For single card rounds, skip trump selection
+    game.trumpSuit = null;  // No trump in single-card rounds
+    game.phase = GAME_PHASES.MAKING_PREDICTIONS;  // Go directly to predictions
+    
     // For single card rounds, send each player their opponents' cards
     game.players.forEach((player, playerIndex) => {
       game.hands[player.id] = hands[playerIndex];
@@ -258,6 +303,9 @@ const startNewRound = (game) => {
       });
     });
   } else {
+    // Normal rounds - need trump selection
+    game.phase = GAME_PHASES.SELECTING_TRUMP;
+    
     // Normal rounds - just send the hand array directly like before
     game.players.forEach((player, index) => {
       game.hands[player.id] = hands[index];
@@ -270,7 +318,6 @@ const startNewRound = (game) => {
   const firstPredictorIndex = getNextPlayerIndex(nextDealerIndex, game.players);
   game.currentPlayer = game.players[firstPredictorIndex].id;
   game.currentPlayerName = game.players[firstPredictorIndex].name;
-  game.phase = GAME_PHASES.MAKING_PREDICTIONS;
 };
 
 io.on('connection', (socket) => {
@@ -420,6 +467,13 @@ io.on('connection', (socket) => {
     }
 
     io.to(gameId).emit('gameStateUpdate', getGameState(game));
+
+    if (isSingleCardRound(game.roundNumber)) {
+      // Set the highest bidder as first player
+      game.highestBidder = getHighestBidder(game);
+      game.currentPlayer = game.highestBidder;
+      game.currentPlayerName = game.players.find(p => p.id === game.highestBidder)?.name;
+    }
   });
 
   socket.on('selectTrump', ({ gameId, suit }) => {
@@ -502,7 +556,7 @@ io.on('connection', (socket) => {
     // If trick is complete (4 cards), evaluate winner
     if (game.currentTrick.length === 4) {
       game.isEvaluatingTrick = true;  // Set the lock
-      const winningPlay = evaluateTrick(game.currentTrick, game.trumpSuit, game.leadSuit);
+      const winningPlay = evaluateTrick(game.currentTrick, game.trumpSuit, game.leadSuit, game.roundNumber);
       const winner = winningPlay.playerId;
       game.tricks[winner] = (game.tricks[winner] || 0) + 1;
 
