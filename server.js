@@ -242,9 +242,8 @@ const startNewRound = (game) => {
     // For single card rounds, send each player their opponents' cards
     game.players.forEach((player, playerIndex) => {
       game.hands[player.id] = hands[playerIndex];
-      game.tricks[player.id] = 0;  // Initialize tricks
+      game.tricks[player.id] = 0;
       
-      // Create object with visible opponent cards
       const opponentCards = {};
       game.players.forEach((opponent, opponentIndex) => {
         if (opponent.id !== player.id) {
@@ -252,7 +251,6 @@ const startNewRound = (game) => {
         }
       });
 
-      // Send both own hand and visible opponent cards
       io.to(player.id).emit('dealCards', {
         ownHand: hands[playerIndex],
         visibleOpponentCards: opponentCards,
@@ -260,14 +258,11 @@ const startNewRound = (game) => {
       });
     });
   } else {
-    // Normal rounds - only send own cards
+    // Normal rounds - just send the hand array directly like before
     game.players.forEach((player, index) => {
       game.hands[player.id] = hands[index];
-      game.tricks[player.id] = 0;  // Initialize tricks
-      io.to(player.id).emit('dealCards', {
-        ownHand: hands[index],
-        isSingleCardRound: false
-      });
+      game.tricks[player.id] = 0;
+      io.to(player.id).emit('dealCards', hands[index]);  // Send array directly
     });
   }
 
