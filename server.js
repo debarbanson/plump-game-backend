@@ -198,6 +198,23 @@ const evaluateTrick = (trick, trumpSuit, leadSuit) => {
   });
 };
 
+// Add this helper function at the top with other utilities
+const getCardsForRound = (roundNumber) => {
+  const cardSchedule = {
+    1: 13, 2: 12, 3: 11, 4: 10, 5: 9, 6: 8, 7: 7,
+    8: 6, 9: 5, 10: 4, 11: 3, 12: 2, 13: 1,
+    14: 1, 15: 1, 16: 1, 17: 2, 18: 3, 19: 4,
+    20: 5, 21: 6, 22: 7, 23: 8, 24: 9, 25: 10,
+    26: 11, 27: 12, 28: 13
+  };
+  return cardSchedule[roundNumber] || 13; // Default to 13 if round not found
+};
+
+// Add this helper function
+const isSingleCardRound = (roundNumber) => {
+  return [13, 14, 15, 16].includes(roundNumber);
+};
+
 // Helper function to start a new round
 const startNewRound = (game) => {
   // Rotate dealer to next player
@@ -209,7 +226,7 @@ const startNewRound = (game) => {
   game.dealer = game.players[nextDealerIndex].name;
 
   game.roundNumber++;
-  game.cardsPerPlayer = 13;
+  game.cardsPerPlayer = getCardsForRound(game.roundNumber);
   game.trumpSuit = null;
   game.leadSuit = null;
   game.currentTrick = [];
@@ -221,11 +238,38 @@ const startNewRound = (game) => {
   const deck = shuffleDeck(createDeck());
   const hands = dealCards(deck, 4, game.cardsPerPlayer);
   
-  game.players.forEach((player, index) => {
-    game.hands[player.id] = hands[index];
-    game.tricks[player.id] = 0;  // Initialize tricks
-    io.to(player.id).emit('dealCards', hands[index]);
-  });
+  if (isSingleCardRound(game.roundNumber)) {
+    // For single card rounds, send each player their opponents' cards
+    game.players.forEach((player, playerIndex) => {
+      game.hands[player.id] = hands[playerIndex];
+      game.tricks[player.id] = 0;  // Initialize tricks
+      
+      // Create object with visible opponent cards
+      const opponentCards = {};
+      game.players.forEach((opponent, opponentIndex) => {
+        if (opponent.id !== player.id) {
+          opponentCards[opponent.id] = hands[opponentIndex];
+        }
+      });
+
+      // Send both own hand and visible opponent cards
+      io.to(player.id).emit('dealCards', {
+        ownHand: hands[playerIndex],
+        visibleOpponentCards: opponentCards,
+        isSingleCardRound: true
+      });
+    });
+  } else {
+    // Normal rounds - only send own cards
+    game.players.forEach((player, index) => {
+      game.hands[player.id] = hands[index];
+      game.tricks[player.id] = 0;  // Initialize tricks
+      io.to(player.id).emit('dealCards', {
+        ownHand: hands[index],
+        isSingleCardRound: false
+      });
+    });
+  }
 
   // Set first predictor (player after dealer)
   const firstPredictorIndex = getNextPlayerIndex(nextDealerIndex, game.players);
