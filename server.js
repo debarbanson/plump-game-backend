@@ -23,9 +23,9 @@ const io = new Server(server, {
     ],
     methods: ["GET", "POST"]
   },
-  pingTimeout: 0,             // Disable timeout
-  connectTimeout: 0,          // Disable initial connection timeout
-  maxHttpBufferSize: 1e8     // Large buffer size for stability
+  pingTimeout: 0,             // No timeout
+  connectTimeout: 0,          // No initial connection timeout
+  transports: ['websocket']   // Stick to websocket only
 });
 
 // Game constants and utilities
@@ -366,8 +366,13 @@ io.on('connection', (socket) => {
   console.log('User connected:', socket.id, 'Tab:', tabId);
   
   tabConnections.set(socket.id, tabId);
-
   activeConnections.set(socket.id, { connected: true });
+
+  socket.on('disconnect', () => {
+    console.log('User disconnected:', socket.id, 'Tab:', tabId);
+    tabConnections.delete(socket.id);
+    activeConnections.delete(socket.id);
+  });
 
   socket.on('heartbeat', ({ tabId }) => {
     // Update last activity for this tab/connection
@@ -672,47 +677,6 @@ io.on('connection', (socket) => {
     if (!game.highestBidder) {
       game.highestBidder = highestBidder;
       io.to(gameId).emit('gameStateUpdate', game);
-    }
-  });
-
-  socket.on('disconnect', () => {
-    console.log('User disconnected:', socket.id, 'Tab:', tabConnections.get(socket.id));
-    tabConnections.delete(socket.id);
-    
-    const gameToUpdate = [...games.values()].find(game => 
-      game.players.some(p => p.id === socket.id)
-    );
-
-    if (gameToUpdate) {
-      const player = gameToUpdate.players.find(p => p.id === socket.id);
-      
-      // Store more game state info for reconnection
-      disconnectedPlayers.set(player.name, {
-        gameId: gameToUpdate.gameId,
-        timestamp: Date.now(),
-        playerId: socket.id,
-        isCurrentPlayer: gameToUpdate.currentPlayer === socket.id,
-        isHighestBidder: gameToUpdate.highestBidder === socket.id,
-        hand: gameToUpdate.hands[socket.id],
-        predictions: gameToUpdate.predictions[socket.id]
-      });
-
-      // Mark player as disconnected
-      const playerIndex = gameToUpdate.players.findIndex(p => p.id === socket.id);
-      if (playerIndex !== -1) {
-        gameToUpdate.players[playerIndex].disconnected = true;
-      }
-
-      // If it was their turn, temporarily pause the game
-      if (gameToUpdate.currentPlayer === socket.id) {
-        gameToUpdate.previousPhase = gameToUpdate.phase;
-        gameToUpdate.phase = GAME_PHASES.PAUSED;
-        gameToUpdate.message = `Game paused - waiting for ${player.name} to reconnect`;
-        gameToUpdate.pausedDuringTurn = true;
-      }
-
-      // Notify other players
-      io.to(gameToUpdate.gameId).emit('gameStateUpdate', gameToUpdate);
     }
   });
 
