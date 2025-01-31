@@ -328,11 +328,22 @@ const startNewRound = (game) => {
       game.hands[player.id] = hands[playerIndex];
       game.tricks[player.id] = 0;
 
-      console.log(`🔍 Dealing to ${player.name}:`, hands[playerIndex]);
+      // During prediction phase, only send opponent cards
+      const opponentCards = [];
+      game.players.forEach((opponent, opponentIndex) => {
+        if (opponent.id !== player.id) {
+          opponentCards.push(hands[opponentIndex][0]);
+        }
+      });
+
+      console.log(`🔍 Player ${player.name} will see opponent cards:`, opponentCards);
       
-      // Send initial state - own card hidden, opponent cards visible
-      io.to(player.id).emit('dealCards', hands[playerIndex]);
-      console.log(`✉️ Sent cards to ${player.name}`);
+      // Send initial state - opponent cards visible, own card hidden
+      io.to(player.id).emit('dealCards', {
+        ownHand: [],  // Hide own card during predictions
+        visibleOpponentCards: opponentCards,
+        isSingleCardRound: true
+      });
     });
 
     console.log('👥 All players dealt cards for single-card round');
