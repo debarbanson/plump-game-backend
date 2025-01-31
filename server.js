@@ -484,8 +484,12 @@ io.on('connection', (socket) => {
   });
 
   socket.on('startGame', ({ gameId }) => {
+    console.log(`Start game request received for game: ${gameId}`);
     const game = games.get(gameId);
-    if (!game) return;
+    if (!game) {
+      console.error('Game not found:', gameId);
+      return;
+    }
 
     if (game.players.length !== 4) {
       socket.emit('error', 'Need exactly 4 players to start');
@@ -502,6 +506,7 @@ io.on('connection', (socket) => {
     const deck = shuffleDeck(createDeck());
     const hands = dealCards(deck, 4, game.cardsPerPlayer);
     
+    // Deal cards to all players including host
     game.players.forEach((player, index) => {
       game.hands[player.id] = hands[index];
       io.to(player.id).emit('dealCards', hands[index]);
@@ -516,7 +521,9 @@ io.on('connection', (socket) => {
     game.currentPlayerName = game.players[firstPredictorIndex].name;
     game.predictions = {};
 
-    io.to(gameId).emit('gameStateUpdate', game);
+    // Make sure to emit to ALL players including host
+    console.log('Emitting game state update to all players');
+    io.to(gameId).emit('gameStateUpdate', getGameState(game));
   });
 
   socket.on('makePrediction', ({ gameId, prediction }) => {
