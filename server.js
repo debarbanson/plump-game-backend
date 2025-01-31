@@ -23,9 +23,12 @@ const io = new Server(server, {
     ],
     methods: ["GET", "POST"]
   },
-  pingTimeout: 0,             // No timeout
-  connectTimeout: 0,          // No initial connection timeout
-  transports: ['websocket']   // Stick to websocket only
+  pingTimeout: 0,                // No timeout
+  connectTimeout: 0,             // No connection timeout
+  transports: ['websocket'],     // WebSocket only
+  allowUpgrades: false,          // Prevent transport upgrades
+  perMessageDeflate: false,      // Disable compression
+  maxHttpBufferSize: 1e8         // Large buffer
 });
 
 // Game constants and utilities
@@ -363,20 +366,28 @@ const startGame = (gameId) => {
 
 io.on('connection', (socket) => {
   const tabId = socket.handshake.auth.tabId;
-  console.log('User connected:', socket.id, 'Tab:', tabId);
-  
-  tabConnections.set(socket.id, tabId);
+  console.log(`User connected: ${socket.id}, Tab: ${tabId}`);
+
+  // Ensure only one connection per player (remove old one)
+  for (const [playerName, existingSocketId] of connectedPlayers.entries()) {
+    if (existingSocketId !== socket.id) {
+      console.log(`Removing old connection for player ${playerName}`);
+      io.sockets.sockets.get(existingSocketId)?.disconnect(true);  // Force disconnect old session
+    }
+  }
+
   activeConnections.set(socket.id, { connected: true });
+  tabConnections.set(socket.id, tabId);
 
   socket.on('disconnect', () => {
-    console.log('User disconnected:', socket.id, 'Tab:', tabId);
-    tabConnections.delete(socket.id);
+    console.log(`User disconnected: ${socket.id}`);
     activeConnections.delete(socket.id);
+    tabConnections.delete(socket.id);
   });
 
-  socket.on('heartbeat', ({ tabId }) => {
-    // Update last activity for this tab/connection
-    console.log('Heartbeat from:', socket.id, 'Tab:', tabId);
+  socket.on('ping', () => {
+    // Just acknowledge the ping
+    socket.emit('pong');
   });
 
   socket.on('createGame', ({ playerName }) => {
@@ -681,55 +692,28 @@ io.on('connection', (socket) => {
   });
 
   socket.on('rejoinGame', ({ gameId, playerName }) => {
-    try {
-      const game = games.get(gameId);
-      if (!game) {
-        socket.emit('error', 'Game not found');
-        return;
-      }
-
-      const player = game.players.find(p => p.name === playerName);
-      if (!player) {
-        socket.emit('error', 'Player not found');
-        return;
-      }
-
-      // Get the old socket ID before updating
-      const oldSocketId = player.id;
-      
-      // Update socket id and references
-      player.id = socket.id;
-      if (game.currentPlayer === oldSocketId) {
-        game.currentPlayer = socket.id;
-      }
-      if (game.highestBidder === oldSocketId) {
-        game.highestBidder = socket.id;
-      }
-      
-      // Transfer the hand
-      if (game.hands && game.hands[oldSocketId]) {
-        game.hands[socket.id] = game.hands[oldSocketId];
-        delete game.hands[oldSocketId];
-      }
-
-      // Handle reconnection
-      player.disconnected = false;
-      const allConnected = !game.players.some(p => p.disconnected);
-      if (allConnected && game.phase === GAME_PHASES.PAUSED && game.previousPhase) {
-        game.phase = game.previousPhase;
-        game.previousPhase = null;
-        game.message = null;
-      }
-      
-      socket.join(gameId);
-      io.to(gameId).emit('gameStateUpdate', getGameState(game));
-      if (game.hands && game.hands[socket.id]) {
-        socket.emit('dealCards', game.hands[socket.id]);
-      }
-    } catch (error) {
-      console.error('Error in rejoinGame:', error);
-      socket.emit('error', 'Failed to rejoin game');
+    const game = games.get(gameId);
+    if (!game) {
+      socket.emit('error', 'Game not found');
+      return;
     }
+
+    const existingPlayer = game.players.find(p => p.name === playerName);
+    if (!existingPlayer) {
+      socket.emit('error', 'Player not found');
+      return;
+    }
+
+    // Remove old socket reference and update new one
+    const oldSocketId = existingPlayer.id;
+    if (oldSocketId && oldSocketId !== socket.id) {
+      io.sockets.sockets.get(oldSocketId)?.disconnect(true);
+    }
+
+    existingPlayer.id = socket.id; // Update to new socket ID
+    socket.join(gameId);
+    socket.emit('dealCards', game.hands[socket.id]);
+    io.to(gameId).emit('gameStateUpdate', getGameState(game));
   });
 });
 
@@ -815,7 +799,7 @@ app.get('/test-email', async (req, res) => {
 });
 
 const PORT = process.env.PORT || 3001;
-server.listen(PORT, () => {
+server.listen(PORT, '0.0.0.0', () => {  // Add host binding
   console.log(`Server running on port ${PORT}`);
 });
 
