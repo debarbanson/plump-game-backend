@@ -171,20 +171,31 @@ const getCardValue = (value) => {
 
 // Add this helper function
 const getHighestBidder = (game) => {
+  console.log('Current predictions:', game.predictions); // Debug log
+
   let highestBid = -1;
   let highestBidder = null;
   let firstHighestBidderIndex = game.players.length;
 
-  Object.entries(game.predictions).forEach(([playerId, prediction]) => {
-    const playerIndex = game.players.findIndex(p => p.id === playerId);
-    if (prediction > highestBid || 
-       (prediction === highestBid && playerIndex < firstHighestBidderIndex)) {
+  // First find the highest bid
+  Object.values(game.predictions).forEach(prediction => {
+    if (prediction > highestBid) {
       highestBid = prediction;
-      highestBidder = playerId;
-      firstHighestBidderIndex = playerIndex;
     }
   });
 
+  console.log('Highest bid found:', highestBid); // Debug log
+
+  // Then find the first player who made this bid
+  game.players.forEach((player, index) => {
+    if (game.predictions[player.id] === highestBid && 
+        index < firstHighestBidderIndex) {
+      firstHighestBidderIndex = index;
+      highestBidder = player.id;
+    }
+  });
+
+  console.log('Selected highest bidder:', highestBidder); // Debug log
   return highestBidder;
 };
 
