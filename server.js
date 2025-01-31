@@ -555,7 +555,7 @@ io.on('connection', (socket) => {
     // Check if all predictions are made
     if (Object.keys(game.predictions).length === game.players.length) {
       if (isSingleCardRound(game.roundNumber)) {
-        // For single card rounds, skip trump selection and go straight to playing
+        // Skip trump selection for single card rounds
         game.phase = GAME_PHASES.PLAYING;
         
         // Now reveal each player's own card and hide opponents' cards
@@ -582,9 +582,42 @@ io.on('connection', (socket) => {
         game.currentPlayerName = game.players.find(p => p.id === highestBidder).name;
         game.highestBidder = highestBidder;
       } else {
-        // Normal round logic...
+        // Normal round - go to trump selection
         game.phase = GAME_PHASES.SELECTING_TRUMP;
-        // ... rest of existing trump selection logic ...
+        
+        // Find highest bidder
+        let highestBid = -1;
+        let highestBidder = null;
+        let firstHighestBidderIndex = game.players.length;
+
+        // First find the highest bid
+        Object.entries(game.predictions).forEach(([playerId, pred]) => {
+          const prediction = Number(pred);
+          if (prediction > highestBid) {
+            highestBid = prediction;
+          }
+        });
+
+        // Then find the first player who made this bid
+        game.players.forEach((player, index) => {
+          if (game.predictions[player.id] === highestBid && 
+              index < firstHighestBidderIndex) {
+            firstHighestBidderIndex = index;
+            highestBidder = player.id;
+          }
+        });
+
+        // Set highest bidder as current player for trump selection
+        game.currentPlayer = highestBidder;
+        game.currentPlayerName = game.players.find(p => p.id === highestBidder).name;
+        game.highestBidder = highestBidder;  // Store for later use
+
+        console.log('Trump selection:', {
+          highestBid,
+          highestBidder: game.highestBidder,
+          currentPlayer: game.currentPlayer,
+          predictions: game.predictions
+        });
       }
     } else {
       // Move to next player for predictions
