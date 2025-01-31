@@ -271,9 +271,10 @@ const startNewRound = (game) => {
   game.trumpSuit = null;
   game.leadSuit = null;
   game.currentTrick = [];
-  game.predictions = {};
-  game.tricks = {};
+  game.predictions = {};  // Reset predictions
+  game.tricks = {};      // Reset tricks
   game.isEvaluatingTrick = false;
+  game.trickWinner = null;
 
   // Deal new cards
   const deck = shuffleDeck(createDeck());
@@ -281,7 +282,6 @@ const startNewRound = (game) => {
   
   if (isSingleCardRound(game.roundNumber)) {
     // For single card rounds, skip trump selection
-    game.trumpSuit = null;  // No trump in single-card rounds
     game.phase = GAME_PHASES.MAKING_PREDICTIONS;  // Go directly to predictions
     
     // For single card rounds, send each player their opponents' cards
@@ -303,21 +303,28 @@ const startNewRound = (game) => {
       });
     });
   } else {
-    // Normal rounds - need trump selection
-    game.phase = GAME_PHASES.SELECTING_TRUMP;
-    
-    // Normal rounds - just send the hand array directly like before
-    game.players.forEach((player, index) => {
-      game.hands[player.id] = hands[index];
-      game.tricks[player.id] = 0;
-      io.to(player.id).emit('dealCards', hands[index]);  // Send array directly
-    });
+    // Normal rounds - start with predictions, not trump selection
+    game.phase = GAME_PHASES.MAKING_PREDICTIONS;
   }
 
   // Set first predictor (player after dealer)
   const firstPredictorIndex = getNextPlayerIndex(nextDealerIndex, game.players);
   game.currentPlayer = game.players[firstPredictorIndex].id;
   game.currentPlayerName = game.players[firstPredictorIndex].name;
+
+  // Deal cards to players
+  game.players.forEach((player, index) => {
+    game.hands[player.id] = hands[index];
+    game.tricks[player.id] = 0;
+    
+    if (isSingleCardRound(game.roundNumber)) {
+      // Special handling for single card rounds...
+    } else {
+      io.to(player.id).emit('dealCards', hands[index]);
+    }
+  });
+
+  io.to(game.gameId).emit('gameStateUpdate', getGameState(game));
 };
 
 io.on('connection', (socket) => {
@@ -446,33 +453,23 @@ io.on('connection', (socket) => {
     const nextPlayerIndex = getNextPlayerIndex(currentPlayerIndex, game.players);
     
     // Check if all predictions are made
-    if (Object.keys(game.predictions).length === 4) {
-      let highestBid = -1;
-      let highestBidder = null;
-      
-      Object.entries(game.predictions).forEach(([playerId, pred]) => {
-        if (Number(pred) > highestBid) {
-          highestBid = Number(pred);
-          highestBidder = playerId;
-        }
-      });
-
-      game.phase = GAME_PHASES.SELECTING_TRUMP;
-      game.currentPlayer = highestBidder;
-      game.currentPlayerName = game.players.find(p => p.id === highestBidder).name;
-      game.highestBidder = highestBidder;
+    if (Object.keys(game.predictions).length === game.players.length) {
+      // Move to trump selection phase for normal rounds
+      if (!isSingleCardRound(game.roundNumber)) {
+        game.phase = GAME_PHASES.SELECTING_TRUMP;
+        // Set dealer as trump selector
+        game.currentPlayer = game.dealerId;
+        game.currentPlayerName = game.players.find(p => p.id === game.dealerId).name;
+      } else {
+        // For single card rounds, move directly to playing phase
+        game.phase = GAME_PHASES.PLAYING;
+        game.currentPlayer = getHighestBidder(game);
+        game.currentPlayerName = game.players.find(p => p.id === game.currentPlayer).name;
+      }
+      io.to(gameId).emit('gameStateUpdate', getGameState(game));
     } else {
       game.currentPlayer = game.players[nextPlayerIndex].id;
       game.currentPlayerName = game.players[nextPlayerIndex].name;
-    }
-
-    io.to(gameId).emit('gameStateUpdate', getGameState(game));
-
-    if (isSingleCardRound(game.roundNumber)) {
-      // Set the highest bidder as first player
-      game.highestBidder = getHighestBidder(game);
-      game.currentPlayer = game.highestBidder;
-      game.currentPlayerName = game.players.find(p => p.id === game.highestBidder)?.name;
     }
   });
 
