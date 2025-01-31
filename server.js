@@ -316,27 +316,26 @@ const startNewRound = (game) => {
   const hands = dealCards(deck, 4, game.cardsPerPlayer);
   
   if (isSingleCardRound(game.roundNumber)) {
-    game.phase = GAME_PHASES.MAKING_PREDICTIONS;  // Skip trump selection
+    console.log(`\n===== STARTING SINGLE CARD ROUND ${game.roundNumber} =====`);
+    console.log(`Current Phase: ${game.phase}`);
+    console.log(`Dealer: ${game.dealer}`);
     
-    // For single card rounds, send each player their opponents' cards
+    game.phase = GAME_PHASES.MAKING_PREDICTIONS;
+    
+    // Deal cards but handle visibility differently
     game.players.forEach((player, playerIndex) => {
+      // Store the full hand in game state
       game.hands[player.id] = hands[playerIndex];
       game.tricks[player.id] = 0;
-      
-      // During prediction phase, send only opponent cards
-      const opponentCards = {};
-      game.players.forEach((opponent, opponentIndex) => {
-        if (opponent.id !== player.id) {
-          opponentCards[opponent.id] = hands[opponentIndex];
-        }
-      });
 
-      io.to(player.id).emit('dealCards', {
-        ownHand: [], // Don't send own card yet
-        visibleOpponentCards: opponentCards,
-        isSingleCardRound: true
-      });
+      console.log(`🔍 Dealing to ${player.name}:`, hands[playerIndex]);
+      
+      // Send initial state - own card hidden, opponent cards visible
+      io.to(player.id).emit('dealCards', hands[playerIndex]);
+      console.log(`✉️ Sent cards to ${player.name}`);
     });
+
+    console.log('👥 All players dealt cards for single-card round');
   } else {
     // Normal round logic...
     game.players.forEach((player, index) => {
