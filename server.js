@@ -22,7 +22,10 @@ const io = new Server(server, {
       "https://www.debdc.nl/playplump"
     ],
     methods: ["GET", "POST"]
-  }
+  },
+  pingTimeout: 0,             // Disable timeout
+  connectTimeout: 0,          // Disable initial connection timeout
+  maxHttpBufferSize: 1e8     // Large buffer size for stability
 });
 
 // Game constants and utilities
@@ -365,6 +368,11 @@ io.on('connection', (socket) => {
   tabConnections.set(socket.id, tabId);
 
   activeConnections.set(socket.id, { connected: true });
+
+  socket.on('heartbeat', () => {
+    // Just receiving the heartbeat keeps the connection alive
+    // Could also use this to update last activity timestamp if needed
+  });
 
   socket.on('createGame', ({ playerName }) => {
     console.log('Create game attempt - Player:', playerName);
