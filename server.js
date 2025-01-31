@@ -269,7 +269,10 @@ const startNewRound = (game) => {
   // Rotate dealer - dealer is one position ahead each round
   const currentDealerIndex = game.players.findIndex(p => p.id === game.dealerId);
   const nextDealerIndex = getNextPlayerIndex(currentDealerIndex, game.players);
+  
+  // Update both dealer ID and name
   game.dealerId = game.players[nextDealerIndex].id;
+  game.dealer = game.players[nextDealerIndex].name;  // Make sure dealer name updates
 
   // First predictor is always the player after the dealer
   const firstPredictorIndex = getNextPlayerIndex(nextDealerIndex, game.players);
@@ -341,7 +344,16 @@ const startGame = (gameId) => {
 
   game.phase = GAME_PHASES.MAKING_PREDICTIONS;
   game.roundNumber = 0;
-  game.dealerId = game.players[0].id;  // Host (first player) is initial dealer
+  game.dealerId = game.players[0].id;
+  game.dealer = game.players[0].name;
+  
+  // Initialize scores and plumps for all players
+  game.scores = {};
+  game.plumps = {};
+  game.players.forEach(player => {
+    game.scores[player.id] = 0;
+    game.plumps[player.id] = 0;
+  });
   
   startNewRound(game);
 };
@@ -606,29 +618,7 @@ io.on('connection', (socket) => {
             totalTricksPlayed: totalTricks
           });
 
-          game.players.forEach(player => {
-            const trickCount = game.tricks[player.id] || 0;
-            const prediction = game.predictions[player.id];
-            
-            if (Number(trickCount) === Number(prediction)) {
-              let points;
-              if (prediction >= 10 && prediction <= 13) {
-                points = prediction * 10;
-              } else {
-                points = Number(prediction) + 10;
-              }
-              game.scores[player.id] = (game.scores[player.id] || 0) + points;
-            } else {
-              // Player got a plump - increment their plump counter
-              game.plumps[player.id] = (game.plumps[player.id] || 0) + 1;
-              console.log('Plump recorded:', {
-                playerName: player.name,
-                prediction: prediction,
-                actualTricks: trickCount,
-                totalPlumps: game.plumps[player.id]
-              });
-            }
-          });
+          calculateScores(game);
 
           // Check if game is over or start new round
           if (game.roundNumber === 28) {
@@ -856,3 +846,36 @@ const PORT = process.env.PORT || 3001;
 server.listen(PORT, () => {
   console.log(`Server running on port ${PORT}`);
 });
+
+const calculateScores = (game) => {
+  console.log('Calculating scores for round:', game.roundNumber);
+  console.log('Current predictions:', game.predictions);
+  console.log('Current tricks:', game.tricks);
+  console.log('Current scores:', game.scores);
+  console.log('Current plumps:', game.plumps);
+
+  game.players.forEach(player => {
+    const prediction = game.predictions[player.id] || 0;
+    const tricks = game.tricks[player.id] || 0;
+    
+    // Calculate score for this round
+    let roundScore = 0;
+    if (prediction === tricks) {
+      roundScore = prediction >= 10 ? prediction * 10 : prediction;
+    } else {
+      // Add plump if prediction was wrong
+      game.plumps[player.id] = (game.plumps[player.id] || 0) + 1;
+    }
+
+    // Update total score
+    game.scores[player.id] = (game.scores[player.id] || 0) + roundScore;
+
+    console.log(`Player ${player.name}:`, {
+      prediction,
+      tricks,
+      roundScore,
+      totalScore: game.scores[player.id],
+      plumps: game.plumps[player.id]
+    });
+  });
+};
