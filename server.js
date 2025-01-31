@@ -585,27 +585,27 @@ io.on('connection', (socket) => {
         // Normal round - go to trump selection
         game.phase = GAME_PHASES.SELECTING_TRUMP;
         
-        // Find highest bidder
+        // Find highest bid and track order of predictions
         let highestBid = -1;
         let highestBidder = null;
-        let firstHighestBidderIndex = game.players.length;
+        const predictionOrder = [];  // Track order of predictions
 
-        // First find the highest bid
-        Object.entries(game.predictions).forEach(([playerId, pred]) => {
-          const prediction = Number(pred);
-          if (prediction > highestBid) {
-            highestBid = prediction;
+        // Record prediction order and find highest bid
+        game.players.forEach(player => {
+          if (game.predictions[player.id] !== undefined) {
+            predictionOrder.push({
+              playerId: player.id,
+              prediction: game.predictions[player.id]
+            });
+            if (game.predictions[player.id] > highestBid) {
+              highestBid = game.predictions[player.id];
+            }
           }
         });
 
-        // Then find the first player who made this bid
-        game.players.forEach((player, index) => {
-          if (game.predictions[player.id] === highestBid && 
-              index < firstHighestBidderIndex) {
-            firstHighestBidderIndex = index;
-            highestBidder = player.id;
-          }
-        });
+        // Find first player who made the highest bid
+        const firstHighestBidder = predictionOrder.find(p => p.prediction === highestBid);
+        highestBidder = firstHighestBidder.playerId;
 
         // Set highest bidder as current player for trump selection
         game.currentPlayer = highestBidder;
@@ -614,6 +614,7 @@ io.on('connection', (socket) => {
 
         console.log('Trump selection:', {
           highestBid,
+          predictionOrder,
           highestBidder: game.highestBidder,
           currentPlayer: game.currentPlayer,
           predictions: game.predictions
