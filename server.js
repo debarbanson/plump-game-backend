@@ -446,12 +446,13 @@ io.on('connection', (socket) => {
       return;
     }
 
-    game.predictions[socket.id] = prediction;
-    
-    // Find next player
+    // Store the prediction
+    game.predictions[socket.id] = Number(prediction);
+
+    // Get next player index
     const currentPlayerIndex = game.players.findIndex(p => p.id === socket.id);
     const nextPlayerIndex = getNextPlayerIndex(currentPlayerIndex, game.players);
-    
+
     // Check if all predictions are made
     if (Object.keys(game.predictions).length === game.players.length) {
       // Move to trump selection phase for normal rounds
@@ -466,11 +467,14 @@ io.on('connection', (socket) => {
         game.currentPlayer = getHighestBidder(game);
         game.currentPlayerName = game.players.find(p => p.id === game.currentPlayer).name;
       }
-      io.to(gameId).emit('gameStateUpdate', getGameState(game));
     } else {
+      // Move to next player for predictions
       game.currentPlayer = game.players[nextPlayerIndex].id;
       game.currentPlayerName = game.players[nextPlayerIndex].name;
     }
+
+    // Always emit game state update after any change
+    io.to(gameId).emit('gameStateUpdate', getGameState(game));
   });
 
   socket.on('selectTrump', ({ gameId, suit }) => {
