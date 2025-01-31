@@ -368,21 +368,48 @@ io.on('connection', (socket) => {
   const tabId = socket.handshake.auth.tabId;
   console.log(`User connected: ${socket.id}, Tab: ${tabId}`);
 
-  // Ensure only one connection per player (remove old one)
-  for (const [playerName, existingSocketId] of connectedPlayers.entries()) {
-    if (existingSocketId !== socket.id) {
-      console.log(`Removing old connection for player ${playerName}`);
-      io.sockets.sockets.get(existingSocketId)?.disconnect(true);  // Force disconnect old session
+  socket.on('rejoinGame', ({ gameId, playerName }) => {
+    const game = games.get(gameId);
+    if (!game) {
+      socket.emit('error', 'Game not found');
+      return;
     }
-  }
 
-  activeConnections.set(socket.id, { connected: true });
-  tabConnections.set(socket.id, tabId);
+    const existingPlayer = game.players.find(p => p.name === playerName);
+    if (!existingPlayer) {
+      socket.emit('error', 'Player not found');
+      return;
+    }
+
+    // Update socket ID for the reconnected player
+    existingPlayer.id = socket.id;
+    socket.join(gameId);
+    console.log(`Player ${playerName} rejoined game ${gameId}`);
+
+    // Send game state back to the reconnected player
+    socket.emit('gameStateUpdate', getGameState(game));
+
+    // Ensure they receive their hand again
+    if (game.hands[existingPlayer.id]) {
+      socket.emit('dealCards', game.hands[existingPlayer.id]);
+    }
+
+    // Notify all players about the rejoin
+    io.to(gameId).emit('gameStateUpdate', getGameState(game));
+  });
+
+  socket.on('heartbeat', ({ tabId }) => {
+    // Keep connection alive and track active players
+    activeConnections.set(socket.id, { 
+      connected: true,
+      lastHeartbeat: Date.now(),
+      tabId 
+    });
+  });
 
   socket.on('disconnect', () => {
     console.log(`User disconnected: ${socket.id}`);
     activeConnections.delete(socket.id);
-    tabConnections.delete(socket.id);
   });
 
   socket.on('ping', () => {
@@ -689,31 +716,6 @@ io.on('connection', (socket) => {
       game.highestBidder = highestBidder;
       io.to(gameId).emit('gameStateUpdate', game);
     }
-  });
-
-  socket.on('rejoinGame', ({ gameId, playerName }) => {
-    const game = games.get(gameId);
-    if (!game) {
-      socket.emit('error', 'Game not found');
-      return;
-    }
-
-    const existingPlayer = game.players.find(p => p.name === playerName);
-    if (!existingPlayer) {
-      socket.emit('error', 'Player not found');
-      return;
-    }
-
-    // Remove old socket reference and update new one
-    const oldSocketId = existingPlayer.id;
-    if (oldSocketId && oldSocketId !== socket.id) {
-      io.sockets.sockets.get(oldSocketId)?.disconnect(true);
-    }
-
-    existingPlayer.id = socket.id; // Update to new socket ID
-    socket.join(gameId);
-    socket.emit('dealCards', game.hands[socket.id]);
-    io.to(gameId).emit('gameStateUpdate', getGameState(game));
   });
 });
 
