@@ -23,12 +23,13 @@ const io = new Server(server, {
     ],
     methods: ["GET", "POST"]
   },
-  pingTimeout: 0,                // No timeout
-  connectTimeout: 0,             // No connection timeout
+  pingTimeout: 60000,            // 1 minute ping timeout
+  connectTimeout: 45000,         // 45 second connection timeout
   transports: ['websocket'],     // WebSocket only
   allowUpgrades: false,          // Prevent transport upgrades
   perMessageDeflate: false,      // Disable compression
-  maxHttpBufferSize: 1e8         // Large buffer
+  maxHttpBufferSize: 1e8,        // Large buffer
+  pingInterval: 25000            // 25 second ping interval
 });
 
 // Game constants and utilities
@@ -488,6 +489,7 @@ io.on('connection', (socket) => {
     const game = games.get(gameId);
     if (!game) {
       console.error('Game not found:', gameId);
+      socket.emit('error', 'Game not found');
       return;
     }
 
@@ -495,6 +497,15 @@ io.on('connection', (socket) => {
       socket.emit('error', 'Need exactly 4 players to start');
       return;
     }
+
+    console.log('Starting game with players:', game.players.map(p => p.name));
+
+    // Ensure all players are in the room
+    game.players.forEach(player => {
+      if (!io.sockets.adapter.rooms.get(gameId)?.has(player.id)) {
+        io.sockets.sockets.get(player.id)?.join(gameId);
+      }
+    });
 
     game.phase = GAME_PHASES.DEALING;
     game.roundNumber = 1;
@@ -510,9 +521,10 @@ io.on('connection', (socket) => {
     game.players.forEach((player, index) => {
       game.hands[player.id] = hands[index];
       io.to(player.id).emit('dealCards', hands[index]);
+      console.log(`Dealt cards to ${player.name}`);
     });
 
-    // Find dealer index and set first predictor (player after dealer)
+    // Find dealer index and set first predictor
     const dealerIndex = game.players.findIndex(p => p.id === game.dealerId);
     const firstPredictorIndex = getNextPlayerIndex(dealerIndex, game.players);
     
@@ -522,8 +534,14 @@ io.on('connection', (socket) => {
     game.predictions = {};
 
     // Make sure to emit to ALL players including host
-    console.log('Emitting game state update to all players');
-    io.to(gameId).emit('gameStateUpdate', getGameState(game));
+    const gameState = getGameState(game);
+    console.log('Emitting game state update to all players:', gameState.phase);
+    
+    // Emit to room and directly to each player to ensure delivery
+    io.to(gameId).emit('gameStateUpdate', gameState);
+    game.players.forEach(player => {
+      io.to(player.id).emit('gameStateUpdate', gameState);
+    });
   });
 
   socket.on('makePrediction', ({ gameId, prediction }) => {
