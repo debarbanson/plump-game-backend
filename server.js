@@ -176,34 +176,47 @@ const getCardValue = (value) => {
   return valueOrder[value] || parseInt(value);
 };
 
-// Add this helper function
+// Add this helper function at the top with other utilities
 const getHighestBidder = (game) => {
-  console.log('Current predictions:', game.predictions); // Debug log
+  console.log('Current predictions:', game.predictions);
 
   let highestBid = -1;
-  let highestBidder = null;
-  let firstHighestBidderIndex = game.players.length;
+  let highestBidders = [];
 
-  // First find the highest bid
-  Object.values(game.predictions).forEach(prediction => {
-    if (prediction > highestBid) {
-      highestBid = prediction;
+  // Find highest bid
+  Object.entries(game.predictions).forEach(([playerId, bid]) => {
+    if (bid > highestBid) {
+      highestBid = bid;
+      highestBidders = [playerId]; // Reset the list if a new highest is found
+    } else if (bid === highestBid) {
+      highestBidders.push(playerId); // Add to the list of players with the same bid
     }
   });
 
-  console.log('Highest bid found:', highestBid); // Debug log
+  console.log(`Highest bid: ${highestBid}, Possible highest bidders:`, highestBidders);
 
-  // Then find the first player who made this bid
+  // If only one player has the highest bid, they select trump
+  if (highestBidders.length === 1) {
+    return highestBidders[0];
+  }
+
+  // If multiple highest bidders, find the one closest to the dealer
+  const dealerIndex = game.players.findIndex(p => p.id === game.dealerId);
+  let selectedBidder = null;
+  let minDistance = game.players.length;
+
   game.players.forEach((player, index) => {
-    if (game.predictions[player.id] === highestBid && 
-        index < firstHighestBidderIndex) {
-      firstHighestBidderIndex = index;
-      highestBidder = player.id;
+    if (highestBidders.includes(player.id)) {
+      let distance = (index - dealerIndex + game.players.length) % game.players.length;
+      if (distance < minDistance) {
+        minDistance = distance;
+        selectedBidder = player.id;
+      }
     }
   });
 
-  console.log('Selected highest bidder:', highestBidder); // Debug log
-  return highestBidder;
+  console.log('Final selected highest bidder:', selectedBidder);
+  return selectedBidder;
 };
 
 // Modify the evaluateTrick function for single-card rounds
@@ -548,77 +561,23 @@ io.on('connection', (socket) => {
     // Store the prediction
     game.predictions[socket.id] = Number(prediction);
 
-    // Get next player index
+    // Move to next player
     const currentPlayerIndex = game.players.findIndex(p => p.id === socket.id);
     const nextPlayerIndex = getNextPlayerIndex(currentPlayerIndex, game.players);
 
-    // Check if all predictions are made
+    // If all predictions are made
     if (Object.keys(game.predictions).length === game.players.length) {
       if (isSingleCardRound(game.roundNumber)) {
-        // Skip trump selection for single card rounds
         game.phase = GAME_PHASES.PLAYING;
-        
-        // Now reveal each player's own card and hide opponents' cards
-        game.players.forEach(player => {
-          io.to(player.id).emit('dealCards', {
-            ownHand: game.hands[player.id],
-            visibleOpponentCards: {},
-            isSingleCardRound: true
-          });
-        });
-
-        // Set highest bidder as first player
-        let highestBid = -1;
-        let highestBidder = null;
-        
-        Object.entries(game.predictions).forEach(([playerId, pred]) => {
-          if (Number(pred) > highestBid) {
-            highestBid = Number(pred);
-            highestBidder = playerId;
-          }
-        });
-
-        game.currentPlayer = highestBidder;
-        game.currentPlayerName = game.players.find(p => p.id === highestBidder).name;
-        game.highestBidder = highestBidder;
       } else {
-        // Normal round - go to trump selection
         game.phase = GAME_PHASES.SELECTING_TRUMP;
-        
-        // Find highest bid and track order of predictions
-        let highestBid = -1;
-        let highestBidder = null;
-        const predictionOrder = [];  // Track order of predictions
 
-        // Record prediction order and find highest bid
-        game.players.forEach(player => {
-          if (game.predictions[player.id] !== undefined) {
-            predictionOrder.push({
-              playerId: player.id,
-              prediction: game.predictions[player.id]
-            });
-            if (game.predictions[player.id] > highestBid) {
-              highestBid = game.predictions[player.id];
-            }
-          }
-        });
+        // Find correct highest bidder
+        game.highestBidder = getHighestBidder(game);
 
-        // Find first player who made the highest bid
-        const firstHighestBidder = predictionOrder.find(p => p.prediction === highestBid);
-        highestBidder = firstHighestBidder.playerId;
-
-        // Set highest bidder as current player for trump selection
-        game.currentPlayer = highestBidder;
-        game.currentPlayerName = game.players.find(p => p.id === highestBidder).name;
-        game.highestBidder = highestBidder;  // Store for later use
-
-        console.log('Trump selection:', {
-          highestBid,
-          predictionOrder,
-          highestBidder: game.highestBidder,
-          currentPlayer: game.currentPlayer,
-          predictions: game.predictions
-        });
+        // Assign current player for trump selection
+        game.currentPlayer = game.highestBidder;
+        game.currentPlayerName = game.players.find(p => p.id === game.highestBidder).name;
       }
     } else {
       // Move to next player for predictions
@@ -638,34 +597,23 @@ io.on('connection', (socket) => {
       return;
     }
 
-    console.log('Before trump selection:', {
+    console.log('Trump selection before:', {
       currentPlayer: game.currentPlayer,
       highestBidder: game.highestBidder
     });
 
     game.trumpSuit = suit;
     game.phase = GAME_PHASES.PLAYING;
-    
-    // Ensure highest bidder is maintained and set as current player
-    if (!game.highestBidder) {
-      // If somehow highestBidder was lost, recalculate it
-      let highestPrediction = -1;
-      Object.entries(game.predictions).forEach(([playerId, pred]) => {
-        if (pred > highestPrediction) {
-          highestPrediction = pred;
-          game.highestBidder = playerId;
-        }
-      });
-    }
-    
+
+    // Assign first player to start the round (same as highest bidder)
     game.currentPlayer = game.highestBidder;
     game.currentPlayerName = game.players.find(p => p.id === game.highestBidder).name;
 
-    console.log('After trump selection:', {
+    console.log('Trump selection after:', {
       phase: game.phase,
       currentPlayer: game.currentPlayer,
       highestBidder: game.highestBidder,
-      predictions: game.predictions
+      trumpSuit: game.trumpSuit
     });
 
     io.to(gameId).emit('gameStateUpdate', game);
