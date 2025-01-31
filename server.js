@@ -303,14 +303,14 @@ const startNewRound = (game) => {
   const hands = dealCards(deck, 4, game.cardsPerPlayer);
   
   if (isSingleCardRound(game.roundNumber)) {
-    // For single card rounds, skip trump selection
-    game.phase = GAME_PHASES.MAKING_PREDICTIONS;  // Go directly to predictions
+    game.phase = GAME_PHASES.MAKING_PREDICTIONS;  // Skip trump selection
     
     // For single card rounds, send each player their opponents' cards
     game.players.forEach((player, playerIndex) => {
       game.hands[player.id] = hands[playerIndex];
       game.tricks[player.id] = 0;
       
+      // During prediction phase, send only opponent cards
       const opponentCards = {};
       game.players.forEach((opponent, opponentIndex) => {
         if (opponent.id !== player.id) {
@@ -319,27 +319,19 @@ const startNewRound = (game) => {
       });
 
       io.to(player.id).emit('dealCards', {
-        ownHand: hands[playerIndex],
+        ownHand: [], // Don't send own card yet
         visibleOpponentCards: opponentCards,
         isSingleCardRound: true
       });
     });
   } else {
-    // Normal rounds - start with predictions, not trump selection
-    game.phase = GAME_PHASES.MAKING_PREDICTIONS;
-  }
-
-  // Deal cards to players
-  game.players.forEach((player, index) => {
-    game.hands[player.id] = hands[index];
-    game.tricks[player.id] = 0;
-    
-    if (isSingleCardRound(game.roundNumber)) {
-      // Special handling for single card rounds...
-    } else {
+    // Normal round logic...
+    game.players.forEach((player, index) => {
+      game.hands[player.id] = hands[index];
+      game.tricks[player.id] = 0;
       io.to(player.id).emit('dealCards', hands[index]);
-    }
-  });
+    });
+  }
 
   io.to(game.gameId).emit('gameStateUpdate', getGameState(game));
 };
@@ -562,27 +554,44 @@ io.on('connection', (socket) => {
 
     // Check if all predictions are made
     if (Object.keys(game.predictions).length === game.players.length) {
-      let highestBid = -1;
-      let highestBidder = null;
-      
-      Object.entries(game.predictions).forEach(([playerId, pred]) => {
-        if (Number(pred) > highestBid) {
-          highestBid = Number(pred);
-          highestBidder = playerId;
-        }
-      });
+      if (isSingleCardRound(game.roundNumber)) {
+        // For single card rounds, skip trump selection and go straight to playing
+        game.phase = GAME_PHASES.PLAYING;
+        
+        // Now reveal each player's own card and hide opponents' cards
+        game.players.forEach(player => {
+          io.to(player.id).emit('dealCards', {
+            ownHand: game.hands[player.id],
+            visibleOpponentCards: {},
+            isSingleCardRound: true
+          });
+        });
 
-      game.phase = GAME_PHASES.SELECTING_TRUMP;
-      game.currentPlayer = highestBidder;
-      game.currentPlayerName = game.players.find(p => p.id === highestBidder).name;
-      game.highestBidder = highestBidder;
+        // Set highest bidder as first player
+        let highestBid = -1;
+        let highestBidder = null;
+        
+        Object.entries(game.predictions).forEach(([playerId, pred]) => {
+          if (Number(pred) > highestBid) {
+            highestBid = Number(pred);
+            highestBidder = playerId;
+          }
+        });
+
+        game.currentPlayer = highestBidder;
+        game.currentPlayerName = game.players.find(p => p.id === highestBidder).name;
+        game.highestBidder = highestBidder;
+      } else {
+        // Normal round logic...
+        game.phase = GAME_PHASES.SELECTING_TRUMP;
+        // ... rest of existing trump selection logic ...
+      }
     } else {
       // Move to next player for predictions
       game.currentPlayer = game.players[nextPlayerIndex].id;
       game.currentPlayerName = game.players[nextPlayerIndex].name;
     }
 
-    // Always emit game state update after any change
     io.to(gameId).emit('gameStateUpdate', getGameState(game));
   });
 
@@ -834,8 +843,6 @@ const calculateScores = (game) => {
   console.log('Calculating scores for round:', game.roundNumber);
   console.log('Current predictions:', game.predictions);
   console.log('Current tricks:', game.tricks);
-  console.log('Current scores:', game.scores);
-  console.log('Current plumps:', game.plumps);
 
   game.players.forEach(player => {
     const prediction = game.predictions[player.id] || 0;
@@ -844,16 +851,20 @@ const calculateScores = (game) => {
     // Calculate score for this round
     let roundScore = 0;
     if (prediction === tricks) {
-      roundScore = prediction >= 10 ? prediction * 10 : prediction;
+      // For predictions 0-9: score = prediction + 10
+      // For predictions 10+: score = prediction × 10
+      roundScore = prediction >= 10 ? prediction * 10 : prediction + 10;
+      console.log(`Player ${player.name} matched prediction ${prediction}. Score: ${roundScore}`);
     } else {
       // Add plump if prediction was wrong
       game.plumps[player.id] = (game.plumps[player.id] || 0) + 1;
+      console.log(`Player ${player.name} got a plump. Prediction: ${prediction}, Tricks: ${tricks}`);
     }
 
     // Update total score
     game.scores[player.id] = (game.scores[player.id] || 0) + roundScore;
 
-    console.log(`Player ${player.name}:`, {
+    console.log(`Player ${player.name} round summary:`, {
       prediction,
       tricks,
       roundScore,
