@@ -362,16 +362,16 @@ const startGame = (gameId) => {
 };
 
 io.on('connection', (socket) => {
-  console.log('User connected:', socket.id, 'Tab:', socket.handshake.auth.tabId);
-  
   const tabId = socket.handshake.auth.tabId;
+  console.log('User connected:', socket.id, 'Tab:', tabId);
+  
   tabConnections.set(socket.id, tabId);
 
   activeConnections.set(socket.id, { connected: true });
 
-  socket.on('heartbeat', () => {
-    // Just receiving the heartbeat keeps the connection alive
-    // Could also use this to update last activity timestamp if needed
+  socket.on('heartbeat', ({ tabId }) => {
+    // Update last activity for this tab/connection
+    console.log('Heartbeat from:', socket.id, 'Tab:', tabId);
   });
 
   socket.on('createGame', ({ playerName }) => {
