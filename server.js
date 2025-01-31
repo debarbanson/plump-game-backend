@@ -183,40 +183,40 @@ const getHighestBidder = (game) => {
   let highestBid = -1;
   let highestBidders = [];
 
-  // Find highest bid
+  // Find the highest bid
   Object.entries(game.predictions).forEach(([playerId, bid]) => {
     if (bid > highestBid) {
       highestBid = bid;
-      highestBidders = [playerId]; // Reset the list if a new highest is found
+      highestBidders = [playerId]; // Reset list if new highest bid is found
     } else if (bid === highestBid) {
-      highestBidders.push(playerId); // Add to the list of players with the same bid
+      highestBidders.push(playerId); // Add to list if bid is the same
     }
   });
 
   console.log(`Highest bid: ${highestBid}, Possible highest bidders:`, highestBidders);
 
-  // If only one player has the highest bid, they select trump
+  // If only one highest bidder, they select trump
   if (highestBidders.length === 1) {
     return highestBidders[0];
   }
 
-  // If multiple highest bidders, find the one closest to the dealer
+  // Find the first highest bidder *in the correct order after the dealer*
   const dealerIndex = game.players.findIndex(p => p.id === game.dealerId);
-  let selectedBidder = null;
-  let minDistance = game.players.length;
+  const playersInOrder = [
+    ...game.players.slice(dealerIndex + 1),  // Players after dealer
+    ...game.players.slice(0, dealerIndex)    // Players before dealer
+  ];
 
-  game.players.forEach((player, index) => {
+  console.log('Players in order after dealer:', playersInOrder.map(p => p.name));
+
+  for (const player of playersInOrder) {
     if (highestBidders.includes(player.id)) {
-      let distance = (index - dealerIndex + game.players.length) % game.players.length;
-      if (distance < minDistance) {
-        minDistance = distance;
-        selectedBidder = player.id;
-      }
+      console.log('Final selected highest bidder:', player.name);
+      return player.id;
     }
-  });
+  }
 
-  console.log('Final selected highest bidder:', selectedBidder);
-  return selectedBidder;
+  return null; // This should never happen, but return null for safety
 };
 
 // Modify the evaluateTrick function for single-card rounds
