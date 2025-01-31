@@ -463,19 +463,20 @@ io.on('connection', (socket) => {
 
     // Check if all predictions are made
     if (Object.keys(game.predictions).length === game.players.length) {
-      if (!isSingleCardRound(game.roundNumber)) {
-        game.phase = GAME_PHASES.SELECTING_TRUMP;
-        // Set highest bidder as trump selector
-        const highestBidder = getHighestBidder(game);
-        game.currentPlayer = highestBidder;
-        game.currentPlayerName = game.players.find(p => p.id === highestBidder).name;
-        game.highestBidder = highestBidder;  // Store for later use
-      } else {
-        // For single card rounds, move directly to playing phase
-        game.phase = GAME_PHASES.PLAYING;
-        game.currentPlayer = getHighestBidder(game);
-        game.currentPlayerName = game.players.find(p => p.id === game.currentPlayer).name;
-      }
+      let highestBid = -1;
+      let highestBidder = null;
+      
+      Object.entries(game.predictions).forEach(([playerId, pred]) => {
+        if (Number(pred) > highestBid) {
+          highestBid = Number(pred);
+          highestBidder = playerId;
+        }
+      });
+
+      game.phase = GAME_PHASES.SELECTING_TRUMP;
+      game.currentPlayer = highestBidder;
+      game.currentPlayerName = game.players.find(p => p.id === highestBidder).name;
+      game.highestBidder = highestBidder;
     } else {
       // Move to next player for predictions
       game.currentPlayer = game.players[nextPlayerIndex].id;
