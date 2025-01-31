@@ -266,23 +266,27 @@ const isSingleCardRound = (roundNumber) => {
 
 // Helper function to start a new round
 const startNewRound = (game) => {
-  // Rotate dealer to next player
+  // Rotate dealer - dealer is one position ahead each round
   const currentDealerIndex = game.players.findIndex(p => p.id === game.dealerId);
   const nextDealerIndex = getNextPlayerIndex(currentDealerIndex, game.players);
-  
-  // Update dealer info
   game.dealerId = game.players[nextDealerIndex].id;
-  game.dealer = game.players[nextDealerIndex].name;
 
+  // First predictor is always the player after the dealer
+  const firstPredictorIndex = getNextPlayerIndex(nextDealerIndex, game.players);
+  
   game.roundNumber++;
   game.cardsPerPlayer = getCardsForRound(game.roundNumber);
   game.trumpSuit = null;
   game.leadSuit = null;
   game.currentTrick = [];
-  game.predictions = {};  // Reset predictions
-  game.tricks = {};      // Reset tricks
+  game.predictions = {};
+  game.tricks = {};
   game.isEvaluatingTrick = false;
-  game.trickWinner = null;
+
+  // Set first predictor
+  game.currentPlayer = game.players[firstPredictorIndex].id;
+  game.currentPlayerName = game.players[firstPredictorIndex].name;
+  game.phase = GAME_PHASES.MAKING_PREDICTIONS;
 
   // Deal new cards
   const deck = shuffleDeck(createDeck());
@@ -315,11 +319,6 @@ const startNewRound = (game) => {
     game.phase = GAME_PHASES.MAKING_PREDICTIONS;
   }
 
-  // Set first predictor (player after dealer)
-  const firstPredictorIndex = getNextPlayerIndex(nextDealerIndex, game.players);
-  game.currentPlayer = game.players[firstPredictorIndex].id;
-  game.currentPlayerName = game.players[firstPredictorIndex].name;
-
   // Deal cards to players
   game.players.forEach((player, index) => {
     game.hands[player.id] = hands[index];
@@ -333,6 +332,18 @@ const startNewRound = (game) => {
   });
 
   io.to(game.gameId).emit('gameStateUpdate', getGameState(game));
+};
+
+// When game starts, set initial dealer (host)
+const startGame = (gameId) => {
+  const game = games.get(gameId);
+  if (!game) return;
+
+  game.phase = GAME_PHASES.MAKING_PREDICTIONS;
+  game.roundNumber = 0;
+  game.dealerId = game.players[0].id;  // Host (first player) is initial dealer
+  
+  startNewRound(game);
 };
 
 io.on('connection', (socket) => {
