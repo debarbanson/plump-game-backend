@@ -563,36 +563,35 @@ io.on('connection', (socket) => {
     const game = games.get(gameId);
     if (!game || game.phase !== GAME_PHASES.MAKING_PREDICTIONS) return;
 
-    if (socket.id !== game.currentPlayer) {
-      socket.emit('error', 'Not your turn');
-      return;
-    }
-
-    // Store the prediction
     game.predictions[socket.id] = Number(prediction);
-
-    // Move to next player
-    const currentPlayerIndex = game.players.findIndex(p => p.id === socket.id);
-    const nextPlayerIndex = getNextPlayerIndex(currentPlayerIndex, game.players);
-
-    // If all predictions are made
+    
+    // Check if all predictions are made
     if (Object.keys(game.predictions).length === game.players.length) {
       if (isSingleCardRound(game.roundNumber)) {
+        console.log("All predictions made in single-card round - sending players their cards");
         game.phase = GAME_PHASES.PLAYING;
-      } else {
-        game.phase = GAME_PHASES.SELECTING_TRUMP;
-
-        // Find correct highest bidder
+        
+        // Set the first player (highest bidder) before sending cards
         game.highestBidder = getHighestBidder(game);
-
-        // Assign current player for trump selection
         game.currentPlayer = game.highestBidder;
         game.currentPlayerName = game.players.find(p => p.id === game.highestBidder).name;
+        
+        game.players.forEach((player) => {
+          // Send each player their own card
+          io.to(player.id).emit('dealCards', {
+            ownHand: game.hands[player.id],  // Now send their actual card
+            visibleOpponentCards: [],  // Clear opponent cards
+            isSingleCardRound: true
+          });
+        });
+
+        console.log(`First player to play: ${game.currentPlayerName}`);
+      } else {
+        // Normal round logic...
+        game.phase = GAME_PHASES.SELECTING_TRUMP;
+        game.highestBidder = getHighestBidder(game);
+        game.currentPlayer = game.highestBidder;
       }
-    } else {
-      // Move to next player for predictions
-      game.currentPlayer = game.players[nextPlayerIndex].id;
-      game.currentPlayerName = game.players[nextPlayerIndex].name;
     }
 
     io.to(gameId).emit('gameStateUpdate', getGameState(game));
