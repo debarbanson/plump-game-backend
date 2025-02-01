@@ -563,10 +563,18 @@ io.on('connection', (socket) => {
     const game = games.get(gameId);
     if (!game || game.phase !== GAME_PHASES.MAKING_PREDICTIONS) return;
 
+    // Store the prediction
     game.predictions[socket.id] = Number(prediction);
     
-    // Check if all predictions are made
-    if (Object.keys(game.predictions).length === game.players.length) {
+    // Move to next player if not all predictions are made
+    if (Object.keys(game.predictions).length < game.players.length) {
+      const currentPlayerIndex = game.players.findIndex(p => p.id === socket.id);
+      const nextPlayerIndex = getNextPlayerIndex(currentPlayerIndex, game.players);
+      game.currentPlayer = game.players[nextPlayerIndex].id;
+      game.currentPlayerName = game.players[nextPlayerIndex].name;
+    }
+    // Rest of the existing code for when all predictions are made
+    else if (Object.keys(game.predictions).length === game.players.length) {
       if (isSingleCardRound(game.roundNumber)) {
         console.log("All predictions made in single-card round - sending players their cards");
         game.phase = GAME_PHASES.PLAYING;
