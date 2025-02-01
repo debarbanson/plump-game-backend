@@ -573,7 +573,7 @@ io.on('connection', (socket) => {
       game.currentPlayer = game.players[nextPlayerIndex].id;
       game.currentPlayerName = game.players[nextPlayerIndex].name;
     }
-    // Rest of the existing code for when all predictions are made
+    // When all predictions are made
     else if (Object.keys(game.predictions).length === game.players.length) {
       if (isSingleCardRound(game.roundNumber)) {
         console.log("All predictions made in single-card round - sending players their cards");
@@ -595,10 +595,19 @@ io.on('connection', (socket) => {
 
         console.log(`First player to play: ${game.currentPlayerName}`);
       } else {
-        // Normal round logic...
+        // Normal round logic - update both currentPlayer and currentPlayerName
         game.phase = GAME_PHASES.SELECTING_TRUMP;
         game.highestBidder = getHighestBidder(game);
         game.currentPlayer = game.highestBidder;
+        // Make sure to update the currentPlayerName to match the highest bidder
+        game.currentPlayerName = game.players.find(p => p.id === game.highestBidder).name;
+        
+        console.log('Moving to trump selection:', {
+          phase: game.phase,
+          highestBidder: game.highestBidder,
+          currentPlayer: game.currentPlayer,
+          currentPlayerName: game.currentPlayerName
+        });
       }
     }
 
