@@ -395,34 +395,63 @@ io.on('connection', (socket) => {
   const tabId = socket.handshake.auth.tabId;
   console.log(`User connected: ${socket.id}, Tab: ${tabId}`);
 
-  socket.on('rejoinGame', ({ gameId, playerName }) => {
+  socket.on('rejoinGame', ({ gameId, playerName, tabId }) => {
     const game = games.get(gameId);
     if (!game) {
-      socket.emit('error', 'Game not found');
-      return;
+        socket.emit('error', 'Game not found');
+        return;
     }
 
     const existingPlayer = game.players.find(p => p.name === playerName);
     if (!existingPlayer) {
-      socket.emit('error', 'Player not found');
-      return;
+        socket.emit('error', 'Player not found');
+        return;
     }
 
     // Update socket ID for the reconnected player
+    const oldId = existingPlayer.id;
     existingPlayer.id = socket.id;
-    socket.join(gameId);
-    console.log(`Player ${playerName} rejoined game ${gameId}`);
+    
+    // Update hands map with new socket ID if there are cards
+    if (game.hands[oldId]) {
+        game.hands[socket.id] = game.hands[oldId];
+        delete game.hands[oldId];
+    }
 
+    // Join game room
+    socket.join(gameId);
+    
+    // Store socket info
+    playerSockets.set(socket.id, { gameId, tabId });
+    
     // Send game state back to the reconnected player
     socket.emit('gameStateUpdate', getGameState(game));
 
-    // Ensure they receive their hand again
-    if (game.hands[existingPlayer.id]) {
-      socket.emit('dealCards', game.hands[existingPlayer.id]);
+    // Restore their hand if it exists
+    if (game.hands[socket.id]) {
+        if (isSingleCardRound(game.roundNumber) && game.phase === GAME_PHASES.MAKING_PREDICTIONS) {
+            // Special handling for single card rounds during prediction phase
+            const opponentCards = [];
+            game.players.forEach((opponent) => {
+                if (opponent.id !== socket.id) {
+                    opponentCards.push(game.hands[opponent.id][0]);
+                }
+            });
+            socket.emit('dealCards', {
+                ownHand: [],
+                visibleOpponentCards: opponentCards,
+                isSingleCardRound: true
+            });
+        } else {
+            // Normal hand restoration
+            socket.emit('dealCards', game.hands[socket.id]);
+        }
     }
 
     // Notify all players about the rejoin
     io.to(gameId).emit('gameStateUpdate', getGameState(game));
+    
+    console.log(`Player ${playerName} rejoined game ${gameId} (old ID: ${oldId}, new ID: ${socket.id})`);
   });
 
   socket.on('heartbeat', ({ tabId }) => {
