@@ -23,14 +23,13 @@ const io = new Server(server, {
     ],
     methods: ["GET", "POST"]
   },
-  pingTimeout: 60000,            // 1 minute ping timeout
-  connectTimeout: 45000,         // 45 second connection timeout
-  transports: ['websocket'],     // WebSocket only
-  allowUpgrades: false,          // Prevent transport upgrades
-  perMessageDeflate: false,      // Disable compression
-  maxHttpBufferSize: 1e8,        // Large buffer
-  pingInterval: 25000            // 25 second ping interval
+  transports: ['websocket'],     // Match frontend: WebSocket only
+  allowUpgrades: false,          // Prevent transport changes
+  pingInterval: 25000,           // 25 seconds ping interval
+  pingTimeout: 60000,            // Wait 1 minute for pong response
+  connectTimeout: 45000          // 45 seconds to establish initial connection
 });
+
 
 // Game constants and utilities
 const SUITS = ['hearts', 'diamonds', 'clubs', 'spades'];
