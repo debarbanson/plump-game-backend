@@ -892,7 +892,30 @@ app.get('/test-db', async (req, res) => {
 });
 
 const PORT = process.env.PORT || 3001;
-server.listen(PORT, '0.0.0.0', () => {  // Add host binding
+
+// After database connection test
+const initTables = async () => {
+  try {
+    await pool.query(`
+      CREATE TABLE IF NOT EXISTS game_results (
+        id SERIAL PRIMARY KEY,
+        player_name VARCHAR(100) NOT NULL,
+        score INTEGER NOT NULL,
+        plumps INTEGER NOT NULL,
+        rank INTEGER NOT NULL,
+        game_id VARCHAR(6) NOT NULL,
+        played_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+      )
+    `);
+    console.log('Database tables initialized');
+  } catch (err) {
+    console.error('Error initializing tables:', err);
+  }
+};
+
+// Before starting server
+server.listen(PORT, '0.0.0.0', async () => {
+  await initTables();
   console.log(`Server running on port ${PORT}`);
 });
 
