@@ -784,26 +784,45 @@ async function sendGameResults(results) {
     rank: index + 1
   }));
 
-  const htmlTable = `
-    <table border="1" cellpadding="5" cellspacing="0" style="border-collapse: collapse;">
-      <tr style="background-color: #f2f2f2;">
-        <th>Name</th>
-        <th>Score</th>
-        <th>Plumps</th>
-        <th>Rank</th>
-      </tr>
-      ${rankedResults.map(r => `
-        <tr>
-          <td>${r.playerName}</td>
-          <td>${r.score}</td>
-          <td>${r.plumps}</td>
-          <td>${r.rank}</td>
-        </tr>
-      `).join('')}
-    </table>
-  `;
-
   try {
+    // Store game results in database
+    for (const result of rankedResults) {
+      await pool.query(
+        `INSERT INTO game_results 
+         (player_name, score, plumps, rank, game_id, played_at)
+         VALUES ($1, $2, $3, $4, $5, $6)`,
+        [
+          result.playerName,
+          result.score,
+          result.plumps,
+          result.rank,
+          result.gameId,
+          new Date()
+        ]
+      );
+    }
+    console.log('Game results stored in database');
+
+    // Send email as before
+    const htmlTable = `
+      <table border="1" cellpadding="5" cellspacing="0" style="border-collapse: collapse;">
+        <tr style="background-color: #f2f2f2;">
+          <th>Name</th>
+          <th>Score</th>
+          <th>Plumps</th>
+          <th>Rank</th>
+        </tr>
+        ${rankedResults.map(r => `
+          <tr>
+            <td>${r.playerName}</td>
+            <td>${r.score}</td>
+            <td>${r.plumps}</td>
+            <td>${r.rank}</td>
+          </tr>
+        `).join('')}
+      </table>
+    `;
+
     await sgMail.send({
       to: 'debarbanson@debdc.nl',
       from: process.env.SENDGRID_VERIFIED_SENDER,
@@ -812,7 +831,8 @@ async function sendGameResults(results) {
     });
     console.log('Game results email sent successfully');
   } catch (error) {
-    console.error('Error sending game results email:', error.response ? error.response.body : error);
+    console.error('Error handling game results:', error);
+    // Continue even if database storage fails
   }
 }
 
