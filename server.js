@@ -5,20 +5,11 @@ const http = require('http');
 const { Server } = require('socket.io');
 const cors = require('cors');
 const sgMail = require('@sendgrid/mail');
-const { Pool } = require('pg'); // Add PostgreSQL
-const { pool } = require('./db');
+const { pool } = require('./db');  // Import pool from db module
 
 const app = express();
 app.use(cors());
 const server = http.createServer(app);
-
-// Database configuration
-const pool = new Pool({
-  connectionString: process.env.DATABASE_URL,
-  ssl: {
-    rejectUnauthorized: false // Required for Render's PostgreSQL
-  }
-});
 
 // Test database connection
 pool.connect((err, client, done) => {
