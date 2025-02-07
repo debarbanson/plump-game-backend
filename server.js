@@ -5,10 +5,31 @@ const http = require('http');
 const { Server } = require('socket.io');
 const cors = require('cors');
 const sgMail = require('@sendgrid/mail');
+const { Pool } = require('pg'); // Add PostgreSQL
+const { pool } = require('./db');
 
 const app = express();
 app.use(cors());
 const server = http.createServer(app);
+
+// Database configuration
+const pool = new Pool({
+  connectionString: process.env.DATABASE_URL,
+  ssl: {
+    rejectUnauthorized: false // Required for Render's PostgreSQL
+  }
+});
+
+// Test database connection
+pool.connect((err, client, done) => {
+  if (err) {
+    console.error('Error connecting to the database', err);
+  } else {
+    console.log('Successfully connected to database');
+    done();
+  }
+});
+
 const io = new Server(server, {
   cors: {
     origin: [
@@ -838,6 +859,24 @@ app.get('/test-email', async (req, res) => {
   } catch (error) {
     console.error('Error sending test email:', error);
     res.status(500).json({ error: 'Failed to send test email' });
+  }
+});
+
+// Add this test endpoint
+app.get('/test-db', async (req, res) => {
+  try {
+    const result = await pool.query('SELECT NOW()');
+    res.json({
+      success: true,
+      message: 'Database connected successfully',
+      timestamp: result.rows[0].now
+    });
+  } catch (err) {
+    res.status(500).json({
+      success: false,
+      message: 'Database connection failed',
+      error: err.message
+    });
   }
 });
 
