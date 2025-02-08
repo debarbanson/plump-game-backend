@@ -35,11 +35,14 @@ const io = new Server(server, {
     ],
     methods: ["GET", "POST"]
   },
-  transports: ['websocket'],     // Match frontend: WebSocket only
-  allowUpgrades: false,          // Prevent transport changes
-  pingInterval: 25000,           // 25 seconds ping interval
-  pingTimeout: 60000,            // Wait 1 minute for pong response
-  connectTimeout: 45000          // 45 seconds to establish initial connection
+  pingTimeout: 120000,           // Increase to 2 minutes
+  connectTimeout: 60000,         // Increase to 1 minute
+  transports: ['websocket'],     
+  allowUpgrades: false,          
+  perMessageDeflate: false,      
+  maxHttpBufferSize: 1e8,        
+  pingInterval: 45000,           // Increase ping interval to 45 seconds
+  cookie: false                  // Disable socket.io cookie
 });
 
 
