@@ -35,20 +35,10 @@ const io = new Server(server, {
     ],
     methods: ["GET", "POST"]
   },
-  // Very long timeouts for social gaming
-  pingTimeout: 24 * 60 * 60 * 1000,  // 24 hours
-  pingInterval: 10000,               // 10 seconds
-  transports: ['websocket', 'polling'],
-  allowUpgrades: true,
-  maxHttpBufferSize: 1e8,
-  // Keep connections alive
-  connectTimeout: 24 * 60 * 60 * 1000,
-  allowEIO3: true,                   // Enable Engine.IO protocol v3
-  cookie: {
-    name: 'plump_io',
-    httpOnly: true,
-    maxAge: 24 * 60 * 60 * 1000     // 24 hour cookie
-  }
+  pingTimeout: 60000,        // 1 minute
+  pingInterval: 25000,       // 25 seconds
+  transports: ['websocket'],
+  maxHttpBufferSize: 1e8
 });
 
 
