@@ -35,14 +35,20 @@ const io = new Server(server, {
     ],
     methods: ["GET", "POST"]
   },
-  pingTimeout: 120000,           // Increase to 2 minutes
-  connectTimeout: 60000,         // Increase to 1 minute
-  transports: ['websocket'],     
-  allowUpgrades: false,          
-  perMessageDeflate: false,      
-  maxHttpBufferSize: 1e8,        
-  pingInterval: 45000,           // Increase ping interval to 45 seconds
-  cookie: false                  // Disable socket.io cookie
+  // Very long timeouts for social gaming
+  pingTimeout: 24 * 60 * 60 * 1000,  // 24 hours
+  pingInterval: 10000,               // 10 seconds
+  transports: ['websocket', 'polling'],
+  allowUpgrades: true,
+  maxHttpBufferSize: 1e8,
+  // Keep connections alive
+  connectTimeout: 24 * 60 * 60 * 1000,
+  allowEIO3: true,                   // Enable Engine.IO protocol v3
+  cookie: {
+    name: 'plump_io',
+    httpOnly: true,
+    maxAge: 24 * 60 * 60 * 1000     // 24 hour cookie
+  }
 });
 
 
@@ -398,63 +404,28 @@ io.on('connection', (socket) => {
   const tabId = socket.handshake.auth.tabId;
   console.log(`User connected: ${socket.id}, Tab: ${tabId}`);
 
-  socket.on('rejoinGame', ({ gameId, playerName, tabId }) => {
+  socket.on('rejoinGame', ({ gameId, playerName }) => {
     const game = games.get(gameId);
     if (!game) {
-        socket.emit('error', 'Game not found');
-        return;
+      socket.emit('error', 'Game not found');
+      return;
     }
 
-    const existingPlayer = game.players.find(p => p.name === playerName);
-    if (!existingPlayer) {
-        socket.emit('error', 'Player not found');
-        return;
+    // Find the player in the game
+    const player = game.players.find(p => p.name === playerName);
+    if (!player) {
+      socket.emit('error', 'Player not found in game');
+      return;
     }
 
-    // Update socket ID for the reconnected player
-    const oldId = existingPlayer.id;
-    existingPlayer.id = socket.id;
+    // Update the player's socket ID
+    player.id = socket.id;
     
-    // Update hands map with new socket ID if there are cards
-    if (game.hands[oldId]) {
-        game.hands[socket.id] = game.hands[oldId];
-        delete game.hands[oldId];
-    }
-
-    // Join game room
+    // Send the current game state to the reconnected player
     socket.join(gameId);
+    socket.emit('gameState', game);
     
-    // Store socket info
-    playerSockets.set(socket.id, { gameId, tabId });
-    
-    // Send game state back to the reconnected player
-    socket.emit('gameStateUpdate', getGameState(game));
-
-    // Restore their hand if it exists
-    if (game.hands[socket.id]) {
-        if (isSingleCardRound(game.roundNumber) && game.phase === GAME_PHASES.MAKING_PREDICTIONS) {
-            // Special handling for single card rounds during prediction phase
-            const opponentCards = [];
-            game.players.forEach((opponent) => {
-                if (opponent.id !== socket.id) {
-                    opponentCards.push(game.hands[opponent.id][0]);
-                }
-            });
-            socket.emit('dealCards', {
-                ownHand: [],
-                visibleOpponentCards: opponentCards,
-                isSingleCardRound: true
-            });
-        } else {
-            // Normal hand restoration
-            socket.emit('dealCards', game.hands[socket.id]);
-        }
-    }
-
-    // Notify all players about the rejoin
-    io.to(gameId).emit('gameStateUpdate', getGameState(game));
-    
-    console.log(`Player ${playerName} rejoined game ${gameId} (old ID: ${oldId}, new ID: ${socket.id})`);
+    console.log(`Player ${playerName} reconnected to game ${gameId}`);
   });
 
   socket.on('heartbeat', ({ tabId }) => {
