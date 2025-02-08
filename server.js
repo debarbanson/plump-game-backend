@@ -35,14 +35,14 @@ const io = new Server(server, {
     ],
     methods: ["GET", "POST"]
   },
-  pingTimeout: 120000,           // 2 minutes
-  connectTimeout: 60000,         // 1 minute
+  pingTimeout: 60000,           // Added: 1 minute ping timeout
+  pingInterval: 25000,          // Added: 25 second ping interval
+  connectTimeout: 120000,       // Added: 2 minute connection timeout
   transports: ['websocket'],     
   allowUpgrades: false,          
   perMessageDeflate: false,
   maxHttpBufferSize: 1e8,        
-  pingInterval: 45000,           // 45 seconds
-  cookie: false                  // Disable socket.io cookie
+  cookie: false                  
 });
 
 
