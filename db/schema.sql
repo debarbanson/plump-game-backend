@@ -1,12 +1,33 @@
--- Games table to track all games
+-- Main games table
 CREATE TABLE IF NOT EXISTS games (
     id SERIAL PRIMARY KEY,
     game_id VARCHAR(6) UNIQUE NOT NULL,
     start_time TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-    end_time TIMESTAMP,
-    player_count INTEGER DEFAULT 4,
-    total_rounds INTEGER,
     status VARCHAR(20) DEFAULT 'active'
+);
+
+-- Game states for active games
+CREATE TABLE IF NOT EXISTS game_states (
+    id SERIAL PRIMARY KEY,
+    game_id VARCHAR(6) REFERENCES games(game_id),
+    state JSONB NOT NULL,
+    updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+);
+
+-- Saved game states for game resumption
+CREATE TABLE IF NOT EXISTS saved_game_states (
+    id SERIAL PRIMARY KEY,
+    game_id VARCHAR(6) REFERENCES games(game_id),
+    state JSONB NOT NULL,
+    saved_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+);
+
+-- Game results for completed games
+CREATE TABLE IF NOT EXISTS game_results (
+    id SERIAL PRIMARY KEY,
+    game_id VARCHAR(6) REFERENCES games(game_id),
+    results JSONB NOT NULL,
+    completed_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
 );
 
 -- Players table for player statistics
