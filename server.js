@@ -31,7 +31,9 @@ const io = new Server(server, {
       "https://www.debdc.nl",
       "http://www.debdc.nl",
       "https://debdc.nl/playplump",
-      "https://www.debdc.nl/playplump"
+      "https://www.debdc.nl/playplump",
+      "https://debdc.nl/test",
+      "https://www.debdc.nl/test"
     ],
     methods: ["GET", "POST"]
   },
