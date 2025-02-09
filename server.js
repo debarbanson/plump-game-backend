@@ -189,6 +189,22 @@ const tabConnections = new Map();  // Track which tab belongs to which player
 // Track active player names and their connection status
 const activePlayers = new Map(); // playerName -> {socketId, lastConnected}
 
+const isPlayerNameAvailable = (playerName) => {
+  const player = activePlayers.get(playerName);
+  if (!player) return true;
+  
+  // If player exists but hasn't connected in last 30 seconds, allow reuse
+  const timeSinceLastConnection = Date.now() - player.lastConnected;
+  return timeSinceLastConnection > 30000;
+};
+
+const updatePlayerConnection = (playerName, socketId) => {
+  activePlayers.set(playerName, {
+    socketId,
+    lastConnected: Date.now()
+  });
+};
+
 // New helper function for card validation
 const validatePlay = (game, playerName, card) => {
   const playerHand = game.hands[playerName];
@@ -391,106 +407,22 @@ const startGame = (gameId) => {
 };
 
 io.on('connection', (socket) => {
-  console.log('New socket connection:', {
-    id: socket.id,
-    playerName: socket.handshake.auth.playerName
-  });
-
-  const playerName = socket.handshake.auth.playerName;
-  
-  // Validate player name
-  if (activePlayers.has(playerName)) {
-    const existingPlayer = activePlayers.get(playerName);
-    // Allow reconnection if last connection was > 30 seconds ago
-    if (Date.now() - existingPlayer.lastConnected < 30000) {
-      socket.emit('error', 'Player name already in use');
-      socket.disconnect();
-      return;
-    }
-  }
-
-  // Update active players
-  activePlayers.set(playerName, {
-    socketId: socket.id,
-    lastConnected: Date.now()
-  });
-
-  socket.on('disconnect', () => {
-    const playerName = Array.from(activePlayers.entries())
-      .find(([_, data]) => data.socketId === socket.id)?.[0];
-    
-    if (playerName && activePlayers.has(playerName)) {
-      // Keep the player entry for 30 seconds to allow for reconnection
-      setTimeout(() => {
-        if (activePlayers.get(playerName)?.socketId === socket.id) {
-          activePlayers.delete(playerName);
-        }
-      }, 30000);
-    }
-  });
-
-  socket.on('rejoinGame', ({ gameId, playerName }) => {
-    const game = games.get(gameId);
-    if (!game) {
-      socket.emit('error', 'Game not found');
-      return;
-    }
-
-    const player = game.players.find(p => p.name === playerName);
-    if (!player) {
-      socket.emit('error', 'Player not found in game');
-      return;
-    }
-
-    // Store old socket ID to transfer state
-    const oldSocketId = player.id;
-    
-    // Update socket ID
-    player.id = socket.id;
-    
-    // Restore player's hand if it exists
-    if (game.hands && game.hands[oldSocketId]) {
-      game.hands[socket.id] = game.hands[oldSocketId];
-      delete game.hands[oldSocketId];
-    }
-
-    // Update any game references to the old socket ID
-    if (game.currentPlayer === oldSocketId) game.currentPlayer = socket.id;
-    if (game.highestBidder === oldSocketId) game.highestBidder = socket.id;
-
-    // Rejoin room and send full state
-    socket.join(gameId);
-    socket.emit('gameStateUpdate', getGameState(game));
-    
-    console.log(`Player ${playerName} reconnected to game ${gameId}`);
-  });
-
-  socket.on('heartbeat', ({ tabId }) => {
-    // Keep connection alive and track active players
-    activeConnections.set(socket.id, { 
-      connected: true,
-      lastHeartbeat: Date.now(),
-      tabId 
-    });
-  });
-
-  socket.on('ping', () => {
-    // Just acknowledge the ping
-    socket.emit('pong');
-  });
+  const tabId = socket.handshake.auth.tabId;
+  console.log(`User connected: ${socket.id}, Tab: ${tabId}`);
 
   socket.on('createGame', ({ playerName }) => {
     console.log('Create game request:', {
       socketId: socket.id,
       playerName: playerName
     });
-    if (activePlayers.has(playerName) && 
-        activePlayers.get(playerName).socketId !== socket.id &&
-        Date.now() - activePlayers.get(playerName).lastConnected < 30000) {
+
+    if (!isPlayerNameAvailable(playerName)) {
       console.log('Player name in use:', playerName);
       socket.emit('error', 'Player name already in use');
       return;
     }
+
+    updatePlayerConnection(playerName, socket.id);
     console.log('Create game attempt - Player:', playerName);
     const gameId = generateGameId();
     const game = {
@@ -536,12 +468,6 @@ io.on('connection', (socket) => {
   });
 
   socket.on('joinGame', ({ gameId, playerName }) => {
-    if (activePlayers.has(playerName) && 
-        activePlayers.get(playerName).socketId !== socket.id &&
-        Date.now() - activePlayers.get(playerName).lastConnected < 30000) {
-      socket.emit('error', 'Player name already in use');
-      return;
-    }
     console.log(`Join game attempt - Game: ${gameId}, Player: ${playerName}`);
     
     const game = games.get(gameId);
@@ -550,19 +476,19 @@ io.on('connection', (socket) => {
       return;
     }
 
-    if (Object.keys(game.players).length >= 4) {
+    if (!isPlayerNameAvailable(playerName)) {
+      socket.emit('error', 'Player name already in use');
+      return;
+    }
+
+    if (game.players.length >= 4) {
       socket.emit('error', 'Game is full');
       return;
     }
 
-    // Add new player to players object
-    game.players[playerName] = {
-      socketId: socket.id,
-      name: playerName,
-      isHost: false,
-      isConnected: true,
-      lastConnected: Date.now()
-    };
+    updatePlayerConnection(playerName, socket.id);
+    const player = { id: socket.id, name: playerName, isHost: false };
+    game.players.push(player);
     game.playerOrder.push(playerName);
     
     // Initialize scores and plumps for the new player
@@ -858,6 +784,17 @@ io.on('connection', (socket) => {
       game.highestBidder = highestBidder;
       io.to(gameId).emit('gameStateUpdate', game);
     }
+  });
+
+  socket.on('disconnect', () => {
+    console.log(`User disconnected: ${socket.id}`);
+    // Remove player from active players if they were the last one with that name
+    for (const [playerName, player] of activePlayers.entries()) {
+      if (player.socketId === socket.id) {
+        activePlayers.delete(playerName);
+      }
+    }
+    activeConnections.delete(socket.id);
   });
 });
 
