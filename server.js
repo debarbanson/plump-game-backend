@@ -145,8 +145,8 @@ const generateGameId = () => {
   return Math.random().toString(36).substring(2, 8).toUpperCase();
 };
 
-const getNextPlayerIndex = (currentIndex, players) => {
-  return (currentIndex + 1) % players.length;
+const getNextPlayerIndex = (currentIndex, playerCount) => {
+  return (currentIndex + 1) % playerCount;
 };
 
 // Game state storage
@@ -158,8 +158,8 @@ const disconnectedPlayers = new Map();  // Keep only one instance of each
 const tabConnections = new Map();  // Track which tab belongs to which player
 
 // New helper function for card validation
-const validatePlay = (game, playerId, card) => {
-  const playerHand = game.hands[playerId];
+const validatePlay = (game, playerName, card) => {
+  const playerHand = game.hands[playerName];
   if (!playerHand) {
     return { valid: false, message: 'Player hand not found' };
   }
@@ -199,40 +199,37 @@ const getHighestBidder = (game) => {
   let highestBid = -1;
   let highestBidders = [];
 
-  // Find the highest bid
-  Object.entries(game.predictions).forEach(([playerId, bid]) => {
+  // Find highest bid using player names
+  Object.entries(game.predictions).forEach(([playerName, bid]) => {
     if (bid > highestBid) {
       highestBid = bid;
-      highestBidders = [playerId]; // Reset list if new highest bid is found
+      highestBidders = [playerName];
     } else if (bid === highestBid) {
-      highestBidders.push(playerId); // Add to list if bid is the same
+      highestBidders.push(playerName);
     }
   });
 
   console.log(`Highest bid: ${highestBid}, Possible highest bidders:`, highestBidders);
 
-  // If only one highest bidder, they select trump
+  // If only one highest bidder, return their socket ID
   if (highestBidders.length === 1) {
-    return highestBidders[0];
+    return highestBidders[0];  // Return player name instead of socket ID
   }
 
-  // Find the first highest bidder *in the correct order after the dealer*
-  const dealerIndex = game.players.findIndex(p => p.id === game.dealerId);
-  const playersInOrder = [
-    ...game.players.slice(dealerIndex + 1),  // Players after dealer
-    ...game.players.slice(0, dealerIndex)    // Players before dealer
+  // Find first highest bidder after dealer in playerOrder
+  const dealerIndex = game.playerOrder.indexOf(game.dealer);
+  const orderedPlayers = [
+    ...game.playerOrder.slice(dealerIndex + 1),
+    ...game.playerOrder.slice(0, dealerIndex)
   ];
 
-  console.log('Players in order after dealer:', playersInOrder.map(p => p.name));
-
-  for (const player of playersInOrder) {
-    if (highestBidders.includes(player.id)) {
-      console.log('Final selected highest bidder:', player.name);
-      return player.id;
+  for (const playerName of orderedPlayers) {
+    if (highestBidders.includes(playerName)) {
+      return playerName;  // Return player name instead of socket ID
     }
   }
 
-  return null; // This should never happen, but return null for safety
+  return null;
 };
 
 // Modify the evaluateTrick function for single-card rounds
@@ -302,75 +299,40 @@ const isSingleCardRound = (roundNumber) => {
 
 // Helper function to start a new round
 const startNewRound = (game) => {
-  // Rotate dealer - dealer is one position ahead each round
-  const currentDealerIndex = game.players.findIndex(p => p.id === game.dealerId);
-  const nextDealerIndex = getNextPlayerIndex(currentDealerIndex, game.players);
-  
-  // Update both dealer ID and name
-  game.dealerId = game.players[nextDealerIndex].id;
-  game.dealer = game.players[nextDealerIndex].name;  // Make sure dealer name updates
-
-  // First predictor is always the player after the dealer
-  const firstPredictorIndex = getNextPlayerIndex(nextDealerIndex, game.players);
-  
   game.roundNumber++;
   game.cardsPerPlayer = getCardsForRound(game.roundNumber);
+  
+  // Update dealer
+  const currentDealerIndex = game.playerOrder.indexOf(game.dealer);
+  const nextDealerIndex = getNextPlayerIndex(currentDealerIndex, game.playerOrder.length);
+
+  // Reset game state
   game.trumpSuit = null;
   game.leadSuit = null;
   game.currentTrick = [];
-  game.predictions = {};
   game.tricks = {};
-  game.isEvaluatingTrick = false;
+  game.predictions = {};
+  game.hands = {};
+  game.phase = GAME_PHASES.DEALING;
 
-  // Set first predictor
-  game.currentPlayer = game.players[firstPredictorIndex].id;
-  game.currentPlayerName = game.players[firstPredictorIndex].name;
-  game.phase = GAME_PHASES.MAKING_PREDICTIONS;
-
-  // Deal new cards
+  // Deal new hands
   const deck = shuffleDeck(createDeck());
   const hands = dealCards(deck, 4, game.cardsPerPlayer);
   
-  if (isSingleCardRound(game.roundNumber)) {
-    console.log(`\n===== STARTING SINGLE CARD ROUND ${game.roundNumber} =====`);
-    console.log(`Current Phase: ${game.phase}`);
-    console.log(`Dealer: ${game.dealer}`);
-    
-    game.phase = GAME_PHASES.MAKING_PREDICTIONS;
-    
-    // Deal cards but handle visibility differently
-    game.players.forEach((player, playerIndex) => {
-      // Store the full hand in game state
-      game.hands[player.id] = hands[playerIndex];
-      game.tricks[player.id] = 0;
+  // Deal cards to players
+  game.playerOrder.forEach((playerName, index) => {
+    const player = game.players[playerName];
+    game.hands[playerName] = hands[index];
+    io.to(player.socketId).emit('dealCards', hands[index]);
+  });
 
-      // During prediction phase, only send opponent cards
-      const opponentCards = [];
-      game.players.forEach((opponent, opponentIndex) => {
-        if (opponent.id !== player.id) {
-          opponentCards.push(hands[opponentIndex][0]);
-        }
-      });
+  // Set first predictor (player after dealer)
+  const firstPredictorIndex = getNextPlayerIndex(nextDealerIndex, game.playerOrder.length);
+  const firstPredictor = game.playerOrder[firstPredictorIndex];
+  game.currentPlayerName = firstPredictor;
+  game.currentPlayer = game.players[firstPredictor].socketId;
 
-      console.log(`🔍 Player ${player.name} will see opponent cards:`, opponentCards);
-      
-      // Send initial state - opponent cards visible, own card hidden
-      io.to(player.id).emit('dealCards', {
-        ownHand: [],  // Hide own card during predictions
-        visibleOpponentCards: opponentCards,
-        isSingleCardRound: true
-      });
-    });
-
-    console.log('👥 All players dealt cards for single-card round');
-  } else {
-    // Normal round logic...
-    game.players.forEach((player, index) => {
-      game.hands[player.id] = hands[index];
-      game.tricks[player.id] = 0;
-      io.to(player.id).emit('dealCards', hands[index]);
-    });
-  }
+  game.phase = GAME_PHASES.MAKING_PREDICTIONS;
 
   io.to(game.gameId).emit('gameStateUpdate', getGameState(game));
 };
@@ -461,7 +423,8 @@ io.on('connection', (socket) => {
     const game = {
       gameId,
       phase: GAME_PHASES.WAITING_FOR_PLAYERS,
-      players: [{ id: socket.id, name: playerName, isHost: true }],
+      players: {},  // Changed from array to object
+      playerOrder: [playerName],  // New array to maintain order
       scores: {},
       plumps: {},
       hands: {},
@@ -471,12 +434,20 @@ io.on('connection', (socket) => {
       cardsPerPlayer: 0,
       currentPlayer: null,
       currentPlayerName: null,
-      dealer: playerName,        // Set initial dealer
-      dealerId: socket.id,       // Store dealer's socket ID
+      dealer: playerName,
       trumpSuit: null,
       leadSuit: null,
       currentTrick: [],
       isEvaluatingTrick: false
+    };
+
+    // Add first player
+    game.players[playerName] = {
+      socketId: socket.id,
+      name: playerName,
+      isHost: true,
+      isConnected: true,
+      lastConnected: Date.now()
     };
 
     // Initialize scores and plumps for the first player
@@ -497,28 +468,31 @@ io.on('connection', (socket) => {
       return;
     }
 
-    if (game.players.length >= 4) {
+    if (Object.keys(game.players).length >= 4) {
       socket.emit('error', 'Game is full');
       return;
     }
 
-    const player = { id: socket.id, name: playerName, isHost: false };
-    game.players.push(player);
+    // Add new player to players object
+    game.players[playerName] = {
+      socketId: socket.id,
+      name: playerName,
+      isHost: false,
+      isConnected: true,
+      lastConnected: Date.now()
+    };
+    game.playerOrder.push(playerName);
     
     // Initialize scores and plumps for the new player
-    game.scores[socket.id] = 0;
-    game.plumps[socket.id] = 0;  // Initialize plumps counter
+    game.scores[playerName] = 0;
+    game.plumps[playerName] = 0;
     
     playerSockets.set(socket.id, { gameId, playerName });
     connectedPlayers.set(playerName, socket.id);
     
     socket.join(gameId);
-    
-    // Emit joinedGame event for the new player
     socket.emit('joinedGame', game);
-    
-    // Update all players
-    io.to(gameId).emit('gameStateUpdate', game);
+    io.to(gameId).emit('gameStateUpdate', getGameState(game));
   });
 
   socket.on('startGame', ({ gameId }) => {
@@ -530,17 +504,17 @@ io.on('connection', (socket) => {
       return;
     }
 
-    if (game.players.length !== 4) {
+    if (game.playerOrder.length !== 4) {
       socket.emit('error', 'Need exactly 4 players to start');
       return;
     }
 
-    console.log('Starting game with players:', game.players.map(p => p.name));
+    console.log('Starting game with players:', game.playerOrder);
 
     // Ensure all players are in the room
-    game.players.forEach(player => {
-      if (!io.sockets.adapter.rooms.get(gameId)?.has(player.id)) {
-        io.sockets.sockets.get(player.id)?.join(gameId);
+    Object.values(game.players).forEach(player => {
+      if (!io.sockets.adapter.rooms.get(gameId)?.has(player.socketId)) {
+        io.sockets.sockets.get(player.socketId)?.join(gameId);
       }
     });
 
@@ -555,29 +529,28 @@ io.on('connection', (socket) => {
     const hands = dealCards(deck, 4, game.cardsPerPlayer);
     
     // Deal cards to all players including host
-    game.players.forEach((player, index) => {
-      game.hands[player.id] = hands[index];
-      io.to(player.id).emit('dealCards', hands[index]);
+    game.playerOrder.forEach((playerName, index) => {
+      const player = game.players[playerName];
+      game.hands[playerName] = hands[index];
+      io.to(player.socketId).emit('dealCards', hands[index]);
       console.log(`Dealt cards to ${player.name}`);
     });
 
     // Find dealer index and set first predictor
-    const dealerIndex = game.players.findIndex(p => p.id === game.dealerId);
+    const dealerIndex = game.playerOrder.indexOf(game.dealer);
     const firstPredictorIndex = getNextPlayerIndex(dealerIndex, game.players);
     
     game.phase = GAME_PHASES.MAKING_PREDICTIONS;
-    game.currentPlayer = game.players[firstPredictorIndex].id;
-    game.currentPlayerName = game.players[firstPredictorIndex].name;
+    const firstPredictor = game.playerOrder[firstPredictorIndex];
+    game.currentPlayerName = firstPredictor;
+    game.currentPlayer = game.players[firstPredictor].socketId;
     game.predictions = {};
 
-    // Make sure to emit to ALL players including host
+    // Emit to room and directly to each player
     const gameState = getGameState(game);
-    console.log('Emitting game state update to all players:', gameState.phase);
-    
-    // Emit to room and directly to each player to ensure delivery
     io.to(gameId).emit('gameStateUpdate', gameState);
-    game.players.forEach(player => {
-      io.to(player.id).emit('gameStateUpdate', gameState);
+    Object.values(game.players).forEach(player => {
+      io.to(player.socketId).emit('gameStateUpdate', gameState);
     });
   });
 
@@ -585,18 +558,25 @@ io.on('connection', (socket) => {
     const game = games.get(gameId);
     if (!game || game.phase !== GAME_PHASES.MAKING_PREDICTIONS) return;
 
-    // Store the prediction
-    game.predictions[socket.id] = Number(prediction);
+    // Get player name from socket id
+    const playerName = Object.keys(game.players).find(name => 
+      game.players[name].socketId === socket.id
+    );
+    if (!playerName) return;
+
+    // Store prediction by player name
+    game.predictions[playerName] = Number(prediction);
     
     // Move to next player if not all predictions are made
-    if (Object.keys(game.predictions).length < game.players.length) {
-      const currentPlayerIndex = game.players.findIndex(p => p.id === socket.id);
+    if (Object.keys(game.predictions).length < game.playerOrder.length) {
+      const currentPlayerIndex = game.playerOrder.indexOf(playerName);
       const nextPlayerIndex = getNextPlayerIndex(currentPlayerIndex, game.players);
-      game.currentPlayer = game.players[nextPlayerIndex].id;
-      game.currentPlayerName = game.players[nextPlayerIndex].name;
+      const nextPlayerName = game.playerOrder[nextPlayerIndex];
+      game.currentPlayerName = nextPlayerName;
+      game.currentPlayer = game.players[nextPlayerName].socketId;
     }
     // When all predictions are made
-    else if (Object.keys(game.predictions).length === game.players.length) {
+    else if (Object.keys(game.predictions).length === game.playerOrder.length) {
       if (isSingleCardRound(game.roundNumber)) {
         console.log("All predictions made in single-card round - sending players their cards");
         game.phase = GAME_PHASES.PLAYING;
@@ -606,11 +586,11 @@ io.on('connection', (socket) => {
         game.currentPlayer = game.highestBidder;
         game.currentPlayerName = game.players.find(p => p.id === game.highestBidder).name;
         
-        game.players.forEach((player) => {
-          // Send each player their own card
-          io.to(player.id).emit('dealCards', {
-            ownHand: game.hands[player.id],  // Now send their actual card
-            visibleOpponentCards: [],  // Clear opponent cards
+        game.playerOrder.forEach((playerName) => {
+          const player = game.players[playerName];
+          io.to(player.socketId).emit('dealCards', {
+            ownHand: game.hands[playerName],
+            visibleOpponentCards: [],
             isSingleCardRound: true
           });
         });
@@ -640,7 +620,10 @@ io.on('connection', (socket) => {
     const game = games.get(gameId);
     if (!game || game.phase !== GAME_PHASES.SELECTING_TRUMP) return;
 
-    if (socket.id !== game.currentPlayer) {
+    const playerName = Object.keys(game.players).find(name => 
+      game.players[name].socketId === socket.id
+    );
+    if (playerName !== game.currentPlayerName) {
       socket.emit('error', 'Not your turn to select trump');
       return;
     }
@@ -671,7 +654,10 @@ io.on('connection', (socket) => {
     const game = games.get(gameId);
     if (!game || game.phase !== GAME_PHASES.PLAYING) return;
 
-    if (socket.id !== game.currentPlayer) {
+    const playerName = Object.keys(game.players).find(name => 
+      game.players[name].socketId === socket.id
+    );
+    if (playerName !== game.currentPlayerName) {
       socket.emit('error', 'Not your turn');
       return;
     }
@@ -683,19 +669,19 @@ io.on('connection', (socket) => {
     }
 
     // Validate the play
-    const isValidPlay = validatePlay(game, socket.id, card);
+    const isValidPlay = validatePlay(game, playerName, card);
     if (!isValidPlay.valid) {
       socket.emit('error', isValidPlay.message);
       return;
     }
 
     // Remove card from player's hand
-    game.hands[socket.id] = game.hands[socket.id].filter(c => 
+    game.hands[playerName] = game.hands[playerName].filter(c => 
       !(c.suit === card.suit && c.value === card.value)
     );
 
     // Add card to current trick
-    game.currentTrick.push({ playerId: socket.id, card });
+    game.currentTrick.push({ playerName, card });
 
     // Set lead suit if first card
     if (game.currentTrick.length === 1) {
@@ -706,26 +692,36 @@ io.on('connection', (socket) => {
     if (game.currentTrick.length === 4) {
       game.isEvaluatingTrick = true;  // Set the lock
       const winningPlay = evaluateTrick(game.currentTrick, game.trumpSuit, game.leadSuit, game.roundNumber);
-      const winner = winningPlay.playerId;
-      game.tricks[winner] = (game.tricks[winner] || 0) + 1;
+      const winnerName = winningPlay.playerName;
+      game.tricks[winnerName] = (game.tricks[winnerName] || 0) + 1;
 
       game.trickWinner = {
-        playerId: winner,
-        playerName: game.players.find(p => p.id === winner).name,
+        playerName: winnerName,
+        socketId: game.players[winnerName].socketId,
         card: winningPlay.card
       };
       
-      io.to(gameId).emit('gameStateUpdate', game);
+      io.to(gameId).emit('gameStateUpdate', getGameState(game));
 
       setTimeout(() => {
+        // Clear the current trick and lead suit
         game.currentTrick = [];
         game.leadSuit = null;
         game.trickWinner = null;
-        game.isEvaluatingTrick = false;
 
-        // Check if round is over
+        // Check if round is complete
         const totalTricks = Object.values(game.tricks).reduce((sum, count) => sum + count, 0);
         if (totalTricks === game.cardsPerPlayer) {
+          // Update scores based on predictions
+          Object.entries(game.tricks).forEach(([playerName, trickCount]) => {
+            const prediction = game.predictions[playerName];
+            if (prediction === trickCount) {
+              game.scores[playerName] = (game.scores[playerName] || 0) + 10 + trickCount;
+            } else {
+              game.plumps[playerName] = (game.plumps[playerName] || 0) + 1;
+            }
+          });
+
           console.log('Round complete - All predictions and tricks:', {
             predictions: game.predictions,
             tricks: game.tricks,
@@ -741,10 +737,10 @@ io.on('connection', (socket) => {
             game.message = 'Game Over!';
             
             // Create results table
-            const resultsTable = game.players.map(player => ({
-              playerName: player.name,
-              score: game.scores[player.id] || 0,
-              plumps: game.plumps[player.id] || 0,
+            const resultsTable = game.playerOrder.map(playerName => ({
+              playerName,
+              score: game.scores[playerName] || 0,
+              plumps: game.plumps[playerName] || 0,
               date: new Date().toISOString()
             }));
 
@@ -755,17 +751,17 @@ io.on('connection', (socket) => {
           }
         } else {
           // Round continues - winner of trick starts next trick
-          game.currentPlayer = winner;
-          game.currentPlayerName = game.players.find(p => p.id === winner).name;
+          game.currentPlayer = winnerName;
+          game.currentPlayerName = game.players.find(p => p.name === winnerName).name;
         }
 
         io.to(gameId).emit('gameStateUpdate', game);
       }, TRICK_DISPLAY_TIME);
     } else {
       // Move to next player
-      const currentPlayerIndex = game.players.findIndex(p => p.id === socket.id);
+      const currentPlayerIndex = game.players.findIndex(p => p.name === playerName);
       const nextPlayerIndex = getNextPlayerIndex(currentPlayerIndex, game.players);
-      game.currentPlayer = game.players[nextPlayerIndex].id;
+      game.currentPlayer = game.players[nextPlayerIndex].name;
       game.currentPlayerName = game.players[nextPlayerIndex].name;
     }
 
@@ -852,11 +848,11 @@ app.get('/api/game-results', (req, res) => {
   const results = [];
   games.forEach(game => {
     if (game.phase === GAME_PHASES.GAME_OVER) {
-      game.players.forEach(player => {
+      game.playerOrder.forEach(playerName => {
         results.push({
-          playerName: player.name,
-          score: game.scores[player.id] || 0,
-          plumps: game.plumps[player.id] || 0,
+          playerName,
+          score: game.scores[playerName] || 0,
+          plumps: game.plumps[playerName] || 0,
           gameId: game.gameId,
           date: new Date().toISOString()
         });
