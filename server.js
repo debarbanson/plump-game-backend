@@ -524,8 +524,8 @@ io.on('connection', (socket) => {
     };
 
     // Initialize scores and plumps for the first player
-    game.scores[socket.id] = 0;
-    game.plumps[socket.id] = 0;
+    game.scores[playerName] = 0;
+    game.plumps[playerName] = 0;
 
     games.set(gameId, game);
     socket.join(gameId);
