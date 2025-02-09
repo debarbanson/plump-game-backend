@@ -391,6 +391,11 @@ const startGame = (gameId) => {
 };
 
 io.on('connection', (socket) => {
+  console.log('New socket connection:', {
+    id: socket.id,
+    playerName: socket.handshake.auth.playerName
+  });
+
   const playerName = socket.handshake.auth.playerName;
   
   // Validate player name
@@ -475,9 +480,14 @@ io.on('connection', (socket) => {
   });
 
   socket.on('createGame', ({ playerName }) => {
+    console.log('Create game request:', {
+      socketId: socket.id,
+      playerName: playerName
+    });
     if (activePlayers.has(playerName) && 
         activePlayers.get(playerName).socketId !== socket.id &&
         Date.now() - activePlayers.get(playerName).lastConnected < 30000) {
+      console.log('Player name in use:', playerName);
       socket.emit('error', 'Player name already in use');
       return;
     }
