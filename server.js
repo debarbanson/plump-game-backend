@@ -11,6 +11,24 @@ const app = express();
 app.use(cors());
 const server = http.createServer(app);
 
+// Add health check endpoint before socket setup
+app.get('/health', (req, res) => {
+  res.json({
+    status: 'ok',
+    uptime: process.uptime(),
+    timestamp: new Date().toISOString()
+  });
+});
+
+// Add test endpoint
+app.get('/test', (req, res) => {
+  res.json({ 
+    status: 'Test environment running!',
+    environment: 'test',
+    timestamp: new Date().toISOString()
+  });
+});
+
 // Test database connection
 pool.connect((err, client, done) => {
   if (err) {
@@ -939,23 +957,6 @@ app.get('/test-db', async (req, res) => {
       error: err.message
     });
   }
-});
-
-// Add this before the PORT declaration
-app.get('/test', (req, res) => {
-  res.json({ 
-    status: 'Test environment running!',
-    environment: 'test',
-    timestamp: new Date().toISOString()
-  });
-});
-
-app.get('/health', (req, res) => {
-  res.json({
-    status: 'ok',
-    socketConnections: io.engine.clientsCount,
-    timestamp: new Date().toISOString()
-  });
 });
 
 const PORT = process.env.PORT || 3001;
