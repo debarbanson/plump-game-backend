@@ -496,8 +496,8 @@ io.on('connection', (socket) => {
     const game = {
       gameId,
       phase: GAME_PHASES.WAITING_FOR_PLAYERS,
-      players: {},  // Changed from array to object
-      playerOrder: [playerName],  // New array to maintain order
+      players: {},
+      playerOrder: [playerName],
       scores: {},
       plumps: {},
       hands: {},
@@ -529,7 +529,10 @@ io.on('connection', (socket) => {
 
     games.set(gameId, game);
     socket.join(gameId);
+    console.log('Emitting gameCreated event:', game);
     socket.emit('gameCreated', game);
+    // Also emit initial game state
+    socket.emit('gameStateUpdate', game);
   });
 
   socket.on('joinGame', ({ gameId, playerName }) => {
