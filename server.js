@@ -888,6 +888,15 @@ app.get('/test-db', async (req, res) => {
   }
 });
 
+// Add this before the PORT declaration
+app.get('/test', (req, res) => {
+  res.json({ 
+    status: 'Test environment running!',
+    environment: 'test',
+    timestamp: new Date().toISOString()
+  });
+});
+
 const PORT = process.env.PORT || 3001;
 
 // After database connection test
