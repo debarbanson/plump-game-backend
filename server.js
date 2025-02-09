@@ -9,6 +9,14 @@ const { pool } = require('./db');  // Import pool from db module
 
 const app = express();
 app.use(cors());
+app.use(express.json({ extended: true }));
+
+// Add UTF-8 encoding
+app.use((req, res, next) => {
+  res.setHeader('Content-Type', 'application/json; charset=utf-8');
+  next();
+});
+
 const server = http.createServer(app);
 
 // Add health check endpoint before socket setup
