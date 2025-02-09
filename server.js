@@ -407,117 +407,46 @@ const startGame = (gameId) => {
 };
 
 io.on('connection', (socket) => {
-  const tabId = socket.handshake.auth.tabId;
-  const playerName = socket.handshake.auth.playerName;
-  console.log('Socket connection:', {
-    socketId: socket.id,
-    tabId: tabId,
-    playerName: playerName
-  });
-
   socket.on('createGame', ({ playerName }) => {
-    console.log('Create game request:', {
-      socketId: socket.id,
-      playerName: playerName
-    });
-
-    if (!isPlayerNameAvailable(playerName)) {
-      console.log('Player name in use:', playerName);
-      socket.emit('error', 'Player name already in use');
-      return;
-    }
-
-    updatePlayerConnection(playerName, socket.id);
-    console.log('Create game attempt - Player:', playerName);
     const gameId = generateGameId();
     const game = {
       gameId,
-      phase: GAME_PHASES.WAITING_FOR_PLAYERS,
       players: {},
-      playerOrder: [playerName],
-      scores: {},
-      plumps: {},
-      hands: {},
-      predictions: {},
-      tricks: {},
-      roundNumber: 0,
-      cardsPerPlayer: 0,
-      currentPlayer: null,
-      currentPlayerName: null,
-      dealer: playerName,
-      trumpSuit: null,
-      leadSuit: null,
-      currentTrick: [],
-      isEvaluatingTrick: false
+      playerOrder: [],
+      // ... other game state
     };
-
-    // Add first player
+    
     game.players[playerName] = {
       socketId: socket.id,
       name: playerName,
       isHost: true,
-      isConnected: true,
-      lastConnected: Date.now()
+      isConnected: true
     };
-
-    // Initialize scores and plumps for the first player
-    game.scores[playerName] = 0;
-    game.plumps[playerName] = 0;
-
+    game.playerOrder.push(playerName);
+    
     games.set(gameId, game);
     socket.join(gameId);
-    console.log('Emitting gameCreated event:', game);
     socket.emit('gameCreated', game);
-    // Also emit initial game state
-    socket.emit('gameStateUpdate', game);
   });
 
   socket.on('joinGame', ({ gameId, playerName }) => {
-    console.log(`Join game attempt - Game: ${gameId}, Player: ${playerName}`);
-    
     const game = games.get(gameId);
     if (!game) {
       socket.emit('error', 'Game not found');
       return;
     }
-
-    if (!isPlayerNameAvailable(playerName)) {
-      socket.emit('error', 'Player name already in use');
-      return;
-    }
-
-    if (Object.keys(game.players).length >= 4) {
-      socket.emit('error', 'Game is full');
-      return;
-    }
-
-    updatePlayerConnection(playerName, socket.id);
-    // Add new player to players object
+    
     game.players[playerName] = {
       socketId: socket.id,
       name: playerName,
       isHost: false,
-      isConnected: true,
-      lastConnected: Date.now()
+      isConnected: true
     };
     game.playerOrder.push(playerName);
     
-    // Initialize scores and plumps for the new player
-    game.scores[playerName] = 0;
-    game.plumps[playerName] = 0;
-    
-    playerSockets.set(socket.id, { gameId, playerName });
-    connectedPlayers.set(playerName, socket.id);
-    
     socket.join(gameId);
-    console.log('Player joined game:', {
-      gameId,
-      playerName,
-      socketId: socket.id,
-      players: Object.keys(game.players)
-    });
-    socket.emit('joinedGame', game);
-    io.to(gameId).emit('gameStateUpdate', getGameState(game));
+    socket.emit('gameJoined', game);
+    io.to(gameId).emit('gameStateUpdate', game);
   });
 
   socket.on('startGame', ({ gameId }) => {
