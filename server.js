@@ -407,19 +407,31 @@ io.on('connection', (socket) => {
       return;
     }
 
-    // Find the player in the game
     const player = game.players.find(p => p.name === playerName);
     if (!player) {
       socket.emit('error', 'Player not found in game');
       return;
     }
 
-    // Update the player's socket ID
+    // Store old socket ID to transfer state
+    const oldSocketId = player.id;
+    
+    // Update socket ID
     player.id = socket.id;
     
-    // Send the current game state to the reconnected player
+    // Restore player's hand if it exists
+    if (game.hands && game.hands[oldSocketId]) {
+      game.hands[socket.id] = game.hands[oldSocketId];
+      delete game.hands[oldSocketId];
+    }
+
+    // Update any game references to the old socket ID
+    if (game.currentPlayer === oldSocketId) game.currentPlayer = socket.id;
+    if (game.highestBidder === oldSocketId) game.highestBidder = socket.id;
+
+    // Rejoin room and send full state
     socket.join(gameId);
-    socket.emit('gameState', game);
+    socket.emit('gameStateUpdate', getGameState(game));
     
     console.log(`Player ${playerName} reconnected to game ${gameId}`);
   });
