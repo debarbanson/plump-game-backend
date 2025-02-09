@@ -408,7 +408,12 @@ const startGame = (gameId) => {
 
 io.on('connection', (socket) => {
   const tabId = socket.handshake.auth.tabId;
-  console.log(`User connected: ${socket.id}, Tab: ${tabId}`);
+  const playerName = socket.handshake.auth.playerName;
+  console.log('Socket connection:', {
+    socketId: socket.id,
+    tabId: tabId,
+    playerName: playerName
+  });
 
   socket.on('createGame', ({ playerName }) => {
     console.log('Create game request:', {
@@ -481,14 +486,20 @@ io.on('connection', (socket) => {
       return;
     }
 
-    if (game.players.length >= 4) {
+    if (Object.keys(game.players).length >= 4) {
       socket.emit('error', 'Game is full');
       return;
     }
 
     updatePlayerConnection(playerName, socket.id);
-    const player = { id: socket.id, name: playerName, isHost: false };
-    game.players.push(player);
+    // Add new player to players object
+    game.players[playerName] = {
+      socketId: socket.id,
+      name: playerName,
+      isHost: false,
+      isConnected: true,
+      lastConnected: Date.now()
+    };
     game.playerOrder.push(playerName);
     
     // Initialize scores and plumps for the new player
@@ -499,6 +510,12 @@ io.on('connection', (socket) => {
     connectedPlayers.set(playerName, socket.id);
     
     socket.join(gameId);
+    console.log('Player joined game:', {
+      gameId,
+      playerName,
+      socketId: socket.id,
+      players: Object.keys(game.players)
+    });
     socket.emit('joinedGame', game);
     io.to(gameId).emit('gameStateUpdate', getGameState(game));
   });
@@ -787,7 +804,10 @@ io.on('connection', (socket) => {
   });
 
   socket.on('disconnect', () => {
-    console.log(`User disconnected: ${socket.id}`);
+    console.log('Socket disconnected:', {
+      socketId: socket.id,
+      playerName: socket.handshake.auth.playerName
+    });
     // Remove player from active players if they were the last one with that name
     for (const [playerName, player] of activePlayers.entries()) {
       if (player.socketId === socket.id) {
