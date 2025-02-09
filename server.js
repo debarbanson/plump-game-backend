@@ -33,14 +33,17 @@ const io = new Server(server, {
       "https://debdc.nl/playplump",
       "https://www.debdc.nl/playplump",
       "https://debdc.nl/test",
-      "https://www.debdc.nl/test"
+      "https://www.debdc.nl/test",
+      "https://plump-game-backend-test.onrender.com"
     ],
-    methods: ["GET", "POST"]
+    methods: ["GET", "POST"],
+    allowedHeaders: ["*"],
+    credentials: false
   },
   pingTimeout: 60000,           // Added: 1 minute ping timeout
   pingInterval: 25000,          // Added: 25 second ping interval
   connectTimeout: 120000,       // Added: 2 minute connection timeout
-  transports: ['websocket'],     
+  transports: ['websocket', 'polling'],     
   allowUpgrades: false,          
   perMessageDeflate: false,
   maxHttpBufferSize: 1e8,        
@@ -943,6 +946,14 @@ app.get('/test', (req, res) => {
   res.json({ 
     status: 'Test environment running!',
     environment: 'test',
+    timestamp: new Date().toISOString()
+  });
+});
+
+app.get('/health', (req, res) => {
+  res.json({
+    status: 'ok',
+    socketConnections: io.engine.clientsCount,
     timestamp: new Date().toISOString()
   });
 });
