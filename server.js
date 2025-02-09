@@ -157,6 +157,9 @@ const activeConnections = new Map();
 const disconnectedPlayers = new Map();  // Keep only one instance of each
 const tabConnections = new Map();  // Track which tab belongs to which player
 
+// Track active player names and their connection status
+const activePlayers = new Map(); // playerName -> {socketId, lastConnected}
+
 // New helper function for card validation
 const validatePlay = (game, playerName, card) => {
   const playerHand = game.hands[playerName];
@@ -359,8 +362,38 @@ const startGame = (gameId) => {
 };
 
 io.on('connection', (socket) => {
-  const tabId = socket.handshake.auth.tabId;
-  console.log(`User connected: ${socket.id}, Tab: ${tabId}`);
+  const playerName = socket.handshake.auth.playerName;
+  
+  // Validate player name
+  if (activePlayers.has(playerName)) {
+    const existingPlayer = activePlayers.get(playerName);
+    // Allow reconnection if last connection was > 30 seconds ago
+    if (Date.now() - existingPlayer.lastConnected < 30000) {
+      socket.emit('error', 'Player name already in use');
+      socket.disconnect();
+      return;
+    }
+  }
+
+  // Update active players
+  activePlayers.set(playerName, {
+    socketId: socket.id,
+    lastConnected: Date.now()
+  });
+
+  socket.on('disconnect', () => {
+    const playerName = Array.from(activePlayers.entries())
+      .find(([_, data]) => data.socketId === socket.id)?.[0];
+    
+    if (playerName && activePlayers.has(playerName)) {
+      // Keep the player entry for 30 seconds to allow for reconnection
+      setTimeout(() => {
+        if (activePlayers.get(playerName)?.socketId === socket.id) {
+          activePlayers.delete(playerName);
+        }
+      }, 30000);
+    }
+  });
 
   socket.on('rejoinGame', ({ gameId, playerName }) => {
     const game = games.get(gameId);
@@ -407,17 +440,18 @@ io.on('connection', (socket) => {
     });
   });
 
-  socket.on('disconnect', () => {
-    console.log(`User disconnected: ${socket.id}`);
-    activeConnections.delete(socket.id);
-  });
-
   socket.on('ping', () => {
     // Just acknowledge the ping
     socket.emit('pong');
   });
 
   socket.on('createGame', ({ playerName }) => {
+    if (activePlayers.has(playerName) && 
+        activePlayers.get(playerName).socketId !== socket.id &&
+        Date.now() - activePlayers.get(playerName).lastConnected < 30000) {
+      socket.emit('error', 'Player name already in use');
+      return;
+    }
     console.log('Create game attempt - Player:', playerName);
     const gameId = generateGameId();
     const game = {
@@ -460,6 +494,12 @@ io.on('connection', (socket) => {
   });
 
   socket.on('joinGame', ({ gameId, playerName }) => {
+    if (activePlayers.has(playerName) && 
+        activePlayers.get(playerName).socketId !== socket.id &&
+        Date.now() - activePlayers.get(playerName).lastConnected < 30000) {
+      socket.emit('error', 'Player name already in use');
+      return;
+    }
     console.log(`Join game attempt - Game: ${gameId}, Player: ${playerName}`);
     
     const game = games.get(gameId);
