@@ -42,22 +42,22 @@ const io = new Server(server, {
     ],
     methods: ["GET", "POST"]
   },
-  pingTimeout: 180000,           // 3 minutes
-  connectTimeout: 120000,        // 2 minutes
+  pingTimeout: 10000,           // Reduced from 180000
+  connectTimeout: 10000,        // Reduced from 120000
   transports: ['websocket', 'polling'],
   allowUpgrades: true,          
   perMessageDeflate: true,      
   maxHttpBufferSize: 1e8,       
-  pingInterval: 25000,          
+  pingInterval: 5000,           // More frequent ping
   cookie: false,
-  upgradeTimeout: 30000,
+  upgradeTimeout: 10000,        // Reduced from 30000
   allowEIO3: true
 });
 
-// Add heartbeat mechanism
+// More frequent heartbeat
 setInterval(() => {
   io.sockets.emit('ping');
-}, 25000);
+}, 5000);  // Reduced from 25000
 
 // Game constants and utilities
 const SUITS = ['hearts', 'diamonds', 'clubs', 'spades'];
@@ -184,7 +184,7 @@ const games = new Map();
 const playerSockets = new Map();
 const connectedPlayers = new Map();
 const activeConnections = new Map();
-const disconnectedPlayers = new Map();  // Keep only one instance of each
+const disconnectedPlayers = new Map();  // Store player info during disconnects
 const tabConnections = new Map();  // Track which tab belongs to which player
 
 // New helper function for card validation
@@ -434,27 +434,57 @@ io.on('connection', (socket) => {
   console.log(`User connected: ${socket.id}, Tab: ${tabId}`);
 
   socket.on('rejoinGame', ({ gameId, playerName }) => {
+    console.log(`Rejoin attempt - Game: ${gameId}, Player: ${playerName}`);
+    
     const game = games.get(gameId);
     if (!game) {
       socket.emit('error', 'Game not found');
       return;
     }
 
-    // Find the player in the game
+    // Check for existing disconnected player
     const player = game.players.find(p => p.name === playerName);
-    if (!player) {
-      socket.emit('error', 'Player not found in game');
-      return;
-    }
+    if (player) {
+      const oldSocketId = player.id;
+      const disconnectedData = disconnectedPlayers.get(oldSocketId);
+      
+      if (disconnectedData) {
+        // Restore player's state
+        player.id = socket.id;
+        player.disconnected = false;
+        
+        // Restore game state for this player
+        if (disconnectedData.gameState) {
+          game.hands[socket.id] = disconnectedData.gameState.hand;
+          game.predictions[socket.id] = disconnectedData.gameState.predictions;
+          game.tricks[socket.id] = disconnectedData.gameState.tricks;
+          game.scores[socket.id] = disconnectedData.gameState.scores;
+          game.plumps[socket.id] = disconnectedData.gameState.plumps;
+        }
 
-    // Update the player's socket ID
-    player.id = socket.id;
-    
-    // Send the current game state to the reconnected player
-    socket.join(gameId);
-    socket.emit('gameState', game);
-    
-    console.log(`Player ${playerName} reconnected to game ${gameId}`);
+        // Clean up old socket data
+        disconnectedPlayers.delete(oldSocketId);
+        delete game.hands[oldSocketId];
+        delete game.predictions[oldSocketId];
+        delete game.tricks[oldSocketId];
+        delete game.scores[oldSocketId];
+        delete game.plumps[oldSocketId];
+
+        // Rejoin the game room
+        socket.join(gameId);
+        
+        // Send current game state to rejoining player
+        socket.emit('gameState', getGameState(game));
+        
+        // Notify other players
+        io.to(gameId).emit('playerRejoined', { 
+          playerId: socket.id, 
+          playerName: player.name 
+        });
+        
+        console.log(`Player ${playerName} successfully rejoined game ${gameId}`);
+      }
+    }
   });
 
   socket.on('heartbeat', ({ tabId }) => {
@@ -466,26 +496,38 @@ io.on('connection', (socket) => {
     });
   });
 
-  socket.on('disconnect', async () => {
-    console.log(`User disconnected: ${socket.id}`);
+  socket.on('disconnect', (reason) => {
+    console.log(`User disconnected: ${socket.id}, Reason: ${reason}`);
     
-    // Clean up empty games
+    // Store disconnected player's info instead of removing them
     for (const [gameId, game] of games.entries()) {
-      if (game.players.some(p => p.id === socket.id)) {
-        console.log(`Removing player from game ${gameId}`);
-        game.players = game.players.filter(p => p.id !== socket.id);
-        
-        if (game.players.length === 0) {
-          console.log(`Removing empty game ${gameId}`);
-          games.delete(gameId);
-        } else {
-          // Update remaining players
-          io.to(gameId).emit('gameStateUpdate', game);
-        }
+      const player = game.players.find(p => p.id === socket.id);
+      if (player) {
+        console.log(`Storing disconnected player info for ${player.name}`);
+        disconnectedPlayers.set(socket.id, {
+          gameId,
+          player,
+          disconnectTime: Date.now(),
+          gameState: {
+            hand: game.hands[socket.id],
+            predictions: game.predictions[socket.id],
+            tricks: game.tricks[socket.id],
+            scores: game.scores[socket.id],
+            plumps: game.plumps[socket.id]
+          }
+        });
+
+        // Mark player as disconnected but don't remove them
+        player.disconnected = true;
+        io.to(gameId).emit('playerDisconnected', { playerId: socket.id, playerName: player.name });
       }
     }
     
     activeConnections.delete(socket.id);
+  });
+
+  socket.on('error', (error) => {
+    console.error(`Socket error for ${socket.id}:`, error);
   });
 
   socket.on('ping', () => {
