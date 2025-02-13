@@ -468,6 +468,23 @@ io.on('connection', (socket) => {
 
   socket.on('disconnect', async () => {
     console.log(`User disconnected: ${socket.id}`);
+    
+    // Clean up empty games
+    for (const [gameId, game] of games.entries()) {
+      if (game.players.some(p => p.id === socket.id)) {
+        console.log(`Removing player from game ${gameId}`);
+        game.players = game.players.filter(p => p.id !== socket.id);
+        
+        if (game.players.length === 0) {
+          console.log(`Removing empty game ${gameId}`);
+          games.delete(gameId);
+        } else {
+          // Update remaining players
+          io.to(gameId).emit('gameStateUpdate', game);
+        }
+      }
+    }
+    
     activeConnections.delete(socket.id);
   });
 
@@ -479,6 +496,8 @@ io.on('connection', (socket) => {
   socket.on('createGame', async ({ playerName }) => {
     console.log('Create game attempt - Player:', playerName);
     const gameId = generateGameId();
+    console.log('Generated gameId:', gameId);
+    
     const game = {
       gameId,
       phase: GAME_PHASES.WAITING_FOR_PLAYERS,
@@ -505,15 +524,19 @@ io.on('connection', (socket) => {
     game.plumps[socket.id] = 0;
 
     games.set(gameId, game);
+    console.log('Game stored. Current games:', Array.from(games.keys()));
+    
     socket.join(gameId);
     socket.emit('gameCreated', game);
   });
 
   socket.on('joinGame', async ({ gameId, playerName }) => {
     console.log(`Join game attempt - Game: ${gameId}, Player: ${playerName}`);
+    console.log('Available games:', Array.from(games.keys()));
     
     const game = games.get(gameId);
     if (!game) {
+      console.log('Game not found in storage. Games:', Array.from(games.keys()));
       socket.emit('error', 'Game not found');
       return;
     }
