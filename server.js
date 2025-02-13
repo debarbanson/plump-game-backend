@@ -987,3 +987,18 @@ const getCardDisplay = (card, language = 'en') => {
   }
   return card.display;
 };
+
+// Initialize tables and start server
+const startServer = async () => {
+  try {
+    await initTables();
+    server.listen(PORT, '0.0.0.0', () => {
+      console.log(`Server running on port ${PORT}`);
+    });
+  } catch (error) {
+    console.error('Failed to start server:', error);
+    process.exit(1);
+  }
+};
+
+startServer();
