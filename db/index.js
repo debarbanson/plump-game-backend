@@ -7,7 +7,11 @@ const pool = new Pool({
   connectionString: process.env.DATABASE_URL,
   ssl: {
     rejectUnauthorized: false // Required for Render's PostgreSQL
-  }
+  },
+  max: 20, // Maximum number of clients in the pool
+  idleTimeoutMillis: 30000, // Close idle clients after 30 seconds
+  connectionTimeoutMillis: 2000, // Return an error after 2 seconds if connection not established
+  maxUses: 7500, // Close and replace a connection after it has been used 7500 times
 });
 
 // Test database connection
@@ -32,4 +36,34 @@ async function initDb() {
   }
 }
 
-module.exports = { pool, initDb }; 
+// Add event listeners for pool
+pool.on('connect', (client) => {
+  console.log('New client connected to pool');
+});
+
+pool.on('error', (err, client) => {
+  console.error('Unexpected error on idle client', err);
+});
+
+pool.on('remove', () => {
+  console.log('Client removed from pool');
+});
+
+// Add transaction wrapper
+const withTransaction = async (callback) => {
+  const client = await pool.connect();
+  try {
+    await client.query('BEGIN');
+    const result = await callback(client);
+    await client.query('COMMIT');
+    return result;
+  } catch (error) {
+    await client.query('ROLLBACK');
+    throw error;
+  } finally {
+    client.release();
+  }
+};
+
+// Export the transaction wrapper
+module.exports = { pool, initDb, withTransaction }; 

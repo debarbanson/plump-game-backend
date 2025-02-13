@@ -6,6 +6,9 @@ const { Server } = require('socket.io');
 const cors = require('cors');
 const sgMail = require('@sendgrid/mail');
 const { pool } = require('./db');  // Import pool from db module
+const { limiter, socketLimiter } = require('./middleware/rateLimiter');
+const cluster = require('cluster');
+const numCPUs = require('os').cpus().length;
 
 const app = express();
 app.use(cors());
@@ -21,6 +24,10 @@ pool.connect((err, client, done) => {
   }
 });
 
+// Add rate limiter middleware
+app.use(limiter);
+
+// Keep the improved socket.io settings
 const io = new Server(server, {
   cors: {
     origin: [
@@ -35,16 +42,22 @@ const io = new Server(server, {
     ],
     methods: ["GET", "POST"]
   },
-  pingTimeout: 120000,           // 2 minutes
-  connectTimeout: 60000,         // 1 minute
-  transports: ['websocket'],     
-  allowUpgrades: false,          
-  perMessageDeflate: false,
-  maxHttpBufferSize: 1e8,        
-  pingInterval: 45000,           // 45 seconds
-  cookie: false                  // Disable socket.io cookie
+  pingTimeout: 180000,           // 3 minutes
+  connectTimeout: 120000,        // 2 minutes
+  transports: ['websocket', 'polling'],
+  allowUpgrades: true,          
+  perMessageDeflate: true,      
+  maxHttpBufferSize: 1e8,       
+  pingInterval: 25000,          
+  cookie: false,
+  upgradeTimeout: 30000,
+  allowEIO3: true
 });
 
+// Add heartbeat mechanism
+setInterval(() => {
+  io.sockets.emit('ping');
+}, 25000);
 
 // Game constants and utilities
 const SUITS = ['hearts', 'diamonds', 'clubs', 'spades'];
@@ -409,7 +422,14 @@ const startGame = (gameId) => {
   startNewRound(game);
 };
 
+// Update socket connection handling
 io.on('connection', (socket) => {
+  // Add rate limiting check
+  if (!socketLimiter.checkLimit(socket)) {
+    socket.emit('error', 'Rate limit exceeded');
+    return;
+  }
+
   const tabId = socket.handshake.auth.tabId;
   console.log(`User connected: ${socket.id}, Tab: ${tabId}`);
 
@@ -439,14 +459,14 @@ io.on('connection', (socket) => {
 
   socket.on('heartbeat', ({ tabId }) => {
     // Keep connection alive and track active players
-    activeConnections.set(socket.id, { 
+    activeConnections.set(socket.id, {
       connected: true,
       lastHeartbeat: Date.now(),
-      tabId 
+      tabId
     });
   });
 
-  socket.on('disconnect', () => {
+  socket.on('disconnect', async () => {
     console.log(`User disconnected: ${socket.id}`);
     activeConnections.delete(socket.id);
   });
@@ -456,7 +476,7 @@ io.on('connection', (socket) => {
     socket.emit('pong');
   });
 
-  socket.on('createGame', ({ playerName }) => {
+  socket.on('createGame', async ({ playerName }) => {
     console.log('Create game attempt - Player:', playerName);
     const gameId = generateGameId();
     const game = {
@@ -489,7 +509,7 @@ io.on('connection', (socket) => {
     socket.emit('gameCreated', game);
   });
 
-  socket.on('joinGame', ({ gameId, playerName }) => {
+  socket.on('joinGame', async ({ gameId, playerName }) => {
     console.log(`Join game attempt - Game: ${gameId}, Player: ${playerName}`);
     
     const game = games.get(gameId);
@@ -924,12 +944,6 @@ const initTables = async () => {
     console.error('Error initializing tables:', err);
   }
 };
-
-// Before starting server
-server.listen(PORT, '0.0.0.0', async () => {
-  await initTables();
-  console.log(`Server running on port ${PORT}`);
-});
 
 const calculateScores = (game) => {
   console.log('Calculating scores for round:', game.roundNumber);
