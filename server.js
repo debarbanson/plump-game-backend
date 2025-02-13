@@ -48,7 +48,21 @@ const io = new Server(server, {
 
 // Game constants and utilities
 const SUITS = ['hearts', 'diamonds', 'clubs', 'spades'];
-const VALUES = ['2', '3', '4', '5', '6', '7', '8', '9', '10', 'J', 'Q', 'K', 'A'];
+const VALUES = [
+  { display: 'A', value: 'A', rank: 14 },  // Using object format for explicit control
+  { display: 'K', value: 'K', rank: 13 },
+  { display: 'Q', value: 'Q', rank: 12 },
+  { display: 'J', value: 'J', rank: 11 },
+  { display: '10', value: '10', rank: 10 },
+  { display: '9', value: '9', rank: 9 },
+  { display: '8', value: '8', rank: 8 },
+  { display: '7', value: '7', rank: 7 },
+  { display: '6', value: '6', rank: 6 },
+  { display: '5', value: '5', rank: 5 },
+  { display: '4', value: '4', rank: 4 },
+  { display: '3', value: '3', rank: 3 },
+  { display: '2', value: '2', rank: 2 }
+];
 
 // Helper function for getting clean game state
 const getGameState = (game) => {
@@ -94,8 +108,13 @@ const TRICK_DISPLAY_TIME = 5000; // 5 seconds
 const createDeck = () => {
   const deck = [];
   for (const suit of SUITS) {
-    for (const value of VALUES) {
-      deck.push({ suit, value });
+    for (const cardValue of VALUES) {
+      deck.push({ 
+        suit, 
+        value: cardValue.value,
+        display: cardValue.display,  // Add explicit display value
+        rank: cardValue.rank 
+      });
     }
   }
   return deck;
@@ -181,13 +200,9 @@ const validatePlay = (game, playerId, card) => {
 };
 
 // Helper function for card value comparison
-const getCardValue = (value) => {
-  const valueOrder = {
-    'A': 14, 'K': 13, 'Q': 12, 'J': 11,
-    '10': 10, '9': 9, '8': 8, '7': 7,
-    '6': 6, '5': 5, '4': 4, '3': 3, '2': 2
-  };
-  return valueOrder[value] || parseInt(value);
+const getCardValue = (card) => {
+  const valueObj = VALUES.find(v => v.value === card.value);
+  return valueObj ? valueObj.rank : parseInt(card.value);
 };
 
 // Add this helper function at the top with other utilities
@@ -245,7 +260,7 @@ const evaluateTrick = (trick, trumpSuit, leadSuit, roundNumber) => {
       
       if (playedCard.suit === leadSuit && 
          (winningCard.suit !== leadSuit || 
-          getCardValue(playedCard.value) > getCardValue(winningCard.value))) {
+          getCardValue(playedCard) > getCardValue(winningCard))) {
         return play;
       }
 
@@ -267,12 +282,12 @@ const evaluateTrick = (trick, trumpSuit, leadSuit, roundNumber) => {
     
     // Higher trump wins
     if (playedCard.suit === trumpSuit && winningCard.suit === trumpSuit) {
-      return getCardValue(playedCard.value) > getCardValue(winningCard.value) ? play : winner;
+      return getCardValue(playedCard) > getCardValue(winningCard) ? play : winner;
     }
     
     // If no trump, highest card of lead suit wins
     if (playedCard.suit === leadSuit && winningCard.suit !== trumpSuit) {
-      if (winningCard.suit !== leadSuit || getCardValue(playedCard.value) > getCardValue(winningCard.value)) {
+      if (winningCard.suit !== leadSuit || getCardValue(playedCard) > getCardValue(winningCard)) {
         return play;
       }
     }
@@ -949,4 +964,12 @@ const calculateScores = (game) => {
       plumps: game.plumps[player.id]
     });
   });
+};
+
+// Add this helper function near the other card-related functions
+const getCardDisplay = (card, language = 'en') => {
+  if (cardValueTranslations[language]?.[card.value]) {
+    return cardValueTranslations[language][card.value];
+  }
+  return card.display;
 };
