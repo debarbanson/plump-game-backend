@@ -186,6 +186,7 @@ const connectedPlayers = new Map();
 const activeConnections = new Map();
 const disconnectedPlayers = new Map();  // Store player info during disconnects
 const tabConnections = new Map();  // Track which tab belongs to which player
+const playerNameToGame = new Map(); // player name -> gameId
 
 // New helper function for card validation
 const validatePlay = (game, playerId, card) => {
@@ -442,48 +443,46 @@ io.on('connection', (socket) => {
       return;
     }
 
-    // Check for existing disconnected player
+    // Get disconnected player data by name instead of old socket ID
+    const disconnectedData = disconnectedPlayers.get(playerName);
     const player = game.players.find(p => p.name === playerName);
-    if (player) {
+    
+    if (player && disconnectedData) {
       const oldSocketId = player.id;
-      const disconnectedData = disconnectedPlayers.get(oldSocketId);
       
-      if (disconnectedData) {
-        // Restore player's state
-        player.id = socket.id;
-        player.disconnected = false;
-        
-        // Restore game state for this player
-        if (disconnectedData.gameState) {
-          game.hands[socket.id] = disconnectedData.gameState.hand;
-          game.predictions[socket.id] = disconnectedData.gameState.predictions;
-          game.tricks[socket.id] = disconnectedData.gameState.tricks;
-          game.scores[socket.id] = disconnectedData.gameState.scores;
-          game.plumps[socket.id] = disconnectedData.gameState.plumps;
-        }
+      // Update socket ID and connection status
+      player.id = socket.id;
+      player.disconnected = false;
+      
+      // Transfer all game state to new socket ID
+      game.hands[socket.id] = disconnectedData.gameState.hand;
+      game.predictions[socket.id] = disconnectedData.gameState.predictions;
+      game.tricks[socket.id] = disconnectedData.gameState.tricks;
+      game.scores[socket.id] = disconnectedData.gameState.scores;
+      game.plumps[socket.id] = disconnectedData.gameState.plumps;
 
-        // Clean up old socket data
-        disconnectedPlayers.delete(oldSocketId);
-        delete game.hands[oldSocketId];
-        delete game.predictions[oldSocketId];
-        delete game.tricks[oldSocketId];
-        delete game.scores[oldSocketId];
-        delete game.plumps[oldSocketId];
-
-        // Rejoin the game room
-        socket.join(gameId);
-        
-        // Send current game state to rejoining player
-        socket.emit('gameState', getGameState(game));
-        
-        // Notify other players
-        io.to(gameId).emit('playerRejoined', { 
-          playerId: socket.id, 
-          playerName: player.name 
-        });
-        
-        console.log(`Player ${playerName} successfully rejoined game ${gameId}`);
+      // If this was the current player, update currentPlayer
+      if (game.currentPlayer === oldSocketId) {
+        game.currentPlayer = socket.id;
       }
+
+      // Clean up old data
+      disconnectedPlayers.delete(playerName);
+      delete game.hands[oldSocketId];
+      delete game.predictions[oldSocketId];
+      delete game.tricks[oldSocketId];
+      delete game.scores[oldSocketId];
+      delete game.plumps[oldSocketId];
+
+      // Rejoin room and sync state
+      socket.join(gameId);
+      socket.emit('gameState', getGameState(game));
+      io.to(gameId).emit('playerRejoined', { 
+        playerId: socket.id,
+        playerName: player.name 
+      });
+
+      console.log(`Player ${playerName} successfully rejoined game ${gameId}`);
     }
   });
 
@@ -499,12 +498,14 @@ io.on('connection', (socket) => {
   socket.on('disconnect', (reason) => {
     console.log(`User disconnected: ${socket.id}, Reason: ${reason}`);
     
-    // Store disconnected player's info instead of removing them
+    // Store disconnected player's info
     for (const [gameId, game] of games.entries()) {
       const player = game.players.find(p => p.id === socket.id);
       if (player) {
         console.log(`Storing disconnected player info for ${player.name}`);
-        disconnectedPlayers.set(socket.id, {
+        
+        // Store full game context
+        disconnectedPlayers.set(player.name, {
           gameId,
           player,
           disconnectTime: Date.now(),
@@ -513,13 +514,22 @@ io.on('connection', (socket) => {
             predictions: game.predictions[socket.id],
             tricks: game.tricks[socket.id],
             scores: game.scores[socket.id],
-            plumps: game.plumps[socket.id]
+            plumps: game.plumps[socket.id],
+            currentPlayer: game.currentPlayer,
+            phase: game.phase,
+            trumpSuit: game.trumpSuit
           }
         });
 
-        // Mark player as disconnected but don't remove them
+        // Update game state to show player as disconnected
         player.disconnected = true;
-        io.to(gameId).emit('playerDisconnected', { playerId: socket.id, playerName: player.name });
+        playerNameToGame.set(player.name, gameId);
+        
+        // Notify other players
+        io.to(gameId).emit('playerDisconnected', { 
+          playerId: socket.id, 
+          playerName: player.name 
+        });
       }
     }
     
