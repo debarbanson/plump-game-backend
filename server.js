@@ -188,8 +188,16 @@ const disconnectedPlayers = new Map();  // Store player info during disconnects
 const tabConnections = new Map();  // Track which tab belongs to which player
 const playerNameToGame = new Map(); // player name -> gameId
 
-// New helper function for card validation
+// Add this near other game state tracking (around line 183)
+const playerCardLocks = new Map(); // Track players who have played in current trick
+
+// Update the validatePlay function (around line 192)
 const validatePlay = (game, playerId, card) => {
+  // Check if player already played in this trick
+  if (playerCardLocks.get(`${game.gameId}-${playerId}`)) {
+    return { valid: false, message: 'Already played a card in this trick' };
+  }
+
   const playerHand = game.hands[playerId];
   if (!playerHand) {
     return { valid: false, message: 'Player hand not found' };
@@ -767,6 +775,23 @@ io.on('connection', (socket) => {
     const game = games.get(gameId);
     if (!game || game.phase !== GAME_PHASES.PLAYING) return;
 
+    // Add lock check
+    const lockKey = `${gameId}-${socket.id}`;
+    if (playerCardLocks.get(lockKey)) {
+      socket.emit('error', 'Already played a card in this trick');
+      return;
+    }
+
+    // Set the lock when card is played
+    playerCardLocks.set(lockKey, true);
+
+    // Clear locks when trick is complete
+    if (game.currentTrick.length === 4) {
+      game.players.forEach(player => {
+        playerCardLocks.delete(`${gameId}-${player.id}`);
+      });
+    }
+
     if (socket.id !== game.currentPlayer) {
       socket.emit('error', 'Not your turn');
       return;
@@ -876,6 +901,36 @@ io.on('connection', (socket) => {
       game.highestBidder = highestBidder;
       io.to(gameId).emit('gameStateUpdate', game);
     }
+  });
+
+  socket.on('reconnect_attempt', () => {
+    const game = Array.from(games.values()).find(g => 
+      g.players.some(p => p.id === socket.id)
+    );
+    
+    if (game) {
+      // Silently attempt to restore game state
+      socket.emit('syncGameState', {
+        gameId: game.gameId,
+        playerId: socket.id
+      });
+    }
+  });
+
+  // Add cleanup for abandoned locks
+  const cleanupCardLocks = (gameId) => {
+    const lockPrefix = `${gameId}-`;
+    for (const key of playerCardLocks.keys()) {
+      if (key.startsWith(lockPrefix)) {
+        playerCardLocks.delete(key);
+      }
+    }
+  };
+
+  // Add to relevant places like game end, round end
+  socket.on('endRound', ({ gameId }) => {
+    cleanupCardLocks(gameId);
+    // ... rest of end round logic
   });
 });
 
