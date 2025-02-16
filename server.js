@@ -524,20 +524,78 @@ io.on('connection', (socket) => {
 
       console.log(`Reconnecting player ${playerName} (${oldSocketId} -> ${socket.id})`);
 
-      // Rest of reconnection logic...
-      // Add more logging
-      logGameEvent('reconnectionProgress', gameId, {
-        playerName,
-        oldSocketId,
-        newSocketId: socket.id,
-        gamePhase: game.phase,
-        hasHand: !!game.hands?.[oldSocketId]
+      // Update all state references
+      if (game.currentTrick.length > 0) {
+        game.currentTrick = game.currentTrick.map(play => {
+          if (play.playerId === oldSocketId) {
+            return { ...play, playerId: socket.id };
+          }
+          return play;
+        });
+      }
+
+      // Transfer all game state
+      ['predictions', 'hands', 'scores', 'plumps'].forEach(stateKey => {
+        if (game[stateKey]?.[oldSocketId] !== undefined) {
+          game[stateKey][socket.id] = game[stateKey][oldSocketId];
+          delete game[stateKey][oldSocketId];
+          logGameEvent('stateTransferred', gameId, {
+            playerName,
+            stateKey,
+            oldSocketId,
+            newSocketId: socket.id
+          });
+        }
       });
 
-      // After state transfer, force a game state update
+      // Update player references
+      const playerIndex = game.players.findIndex(p => p.id === oldSocketId);
+      if (playerIndex !== -1) {
+        game.players[playerIndex].id = socket.id;
+        game.players[playerIndex].disconnected = false;
+      }
+
+      // Update game state references
+      if (game.currentPlayer === oldSocketId) {
+        game.currentPlayer = socket.id;
+        game.currentPlayerName = playerName;
+      }
+      if (game.highestBidder === oldSocketId) {
+        game.highestBidder = socket.id;
+      }
+
+      disconnectedPlayers.delete(oldSocketId);
+
+      // Validate and recover game state
+      const validatedGame = validateGameState(game);
+      const recoveredGame = recoverGameState(validatedGame);
+
+      // Rejoin room and sync state
+      socket.join(gameId);
+      socket.emit('gameState', recoveredGame);
+      socket.emit('dealCards', recoveredGame.hands[socket.id]);
+      
+      // Notify other players
+      io.to(gameId).emit('playerRejoined', { 
+        playerId: socket.id,
+        playerName 
+      });
+      
+      // Update all players
+      io.to(gameId).emit('gameStateUpdate', getGameState(recoveredGame));
+
+      logGameEvent('rejoinSuccess', gameId, {
+        playerName,
+        newSocketId: socket.id,
+        gamePhase: game.phase,
+        handRestored: !!recoveredGame.hands[socket.id]
+      });
+
+      // Force sync after everything is done
       io.to(gameId).emit('forceGameStateSync', {
         timestamp: Date.now()
       });
+
     } catch (error) {
       console.error('Error in rejoinGame:', error);
       socket.emit('error', 'Failed to rejoin game');
