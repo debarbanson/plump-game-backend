@@ -467,6 +467,19 @@ const validateGameState = (game) => {
     });
   }
 
+  // Consolidate tricks for each player
+  if (game.tricks) {
+    const playerTricks = {};
+    Object.entries(game.tricks).forEach(([socketId, tricks]) => {
+      const player = game.players.find(p => p.id === socketId || 
+        game.players.some(op => op.name === p.name && op.id === socketId));
+      if (player) {
+        playerTricks[player.id] = (playerTricks[player.id] || 0) + tricks;
+      }
+    });
+    game.tricks = playerTricks;
+  }
+
   if (errors.length > 0) {
     logGameEvent('gameStateValidation', game.gameId, {
       errors,
@@ -535,15 +548,22 @@ io.on('connection', (socket) => {
       }
 
       // Transfer all game state
-      ['predictions', 'hands', 'scores', 'plumps'].forEach(stateKey => {
+      ['predictions', 'hands', 'scores', 'plumps', 'tricks'].forEach(stateKey => {
         if (game[stateKey]?.[oldSocketId] !== undefined) {
-          game[stateKey][socket.id] = game[stateKey][oldSocketId];
+          if (stateKey === 'tricks') {
+            // Sum up tricks from all previous socket IDs
+            const oldTricks = game[stateKey][oldSocketId] || 0;
+            game[stateKey][socket.id] = (game[stateKey][socket.id] || 0) + oldTricks;
+          } else {
+            game[stateKey][socket.id] = game[stateKey][oldSocketId];
+          }
           delete game[stateKey][oldSocketId];
           logGameEvent('stateTransferred', gameId, {
             playerName,
             stateKey,
             oldSocketId,
-            newSocketId: socket.id
+            newSocketId: socket.id,
+            value: game[stateKey][socket.id]
           });
         }
       });
