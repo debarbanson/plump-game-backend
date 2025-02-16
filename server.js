@@ -782,16 +782,6 @@ io.on('connection', (socket) => {
       return;
     }
 
-    // Set the lock when card is played
-    playerCardLocks.set(lockKey, true);
-
-    // Clear locks when trick is complete
-    if (game.currentTrick.length === 4) {
-      game.players.forEach(player => {
-        playerCardLocks.delete(`${gameId}-${player.id}`);
-      });
-    }
-
     if (socket.id !== game.currentPlayer) {
       socket.emit('error', 'Not your turn');
       return;
@@ -810,22 +800,32 @@ io.on('connection', (socket) => {
       return;
     }
 
-    // Remove card from player's hand
-    game.hands[socket.id] = game.hands[socket.id].filter(c => 
-      !(c.suit === card.suit && c.value === card.value)
-    );
+    // Set the lock AFTER all validations pass
+    playerCardLocks.set(lockKey, true);
 
     // Add card to current trick
-    game.currentTrick.push({ playerId: socket.id, card });
+    game.currentTrick.push({ 
+      playerId: socket.id, 
+      playerName: game.players.find(p => p.id === socket.id).name,
+      card 
+    });
 
     // Set lead suit if first card
     if (game.currentTrick.length === 1) {
       game.leadSuit = card.suit;
     }
 
+    // Remove card from player's hand
+    game.hands[socket.id] = game.hands[socket.id].filter(c => 
+      !(c.suit === card.suit && c.value === card.value)
+    );
+
+    // Emit game state update BEFORE checking for trick completion
+    io.to(gameId).emit('gameStateUpdate', getGameState(game));
+
     // If trick is complete (4 cards), evaluate winner
     if (game.currentTrick.length === 4) {
-      game.isEvaluatingTrick = true;  // Set the lock
+      game.isEvaluatingTrick = true;
       const winningPlay = evaluateTrick(game.currentTrick, game.trumpSuit, game.leadSuit, game.roundNumber);
       const winner = winningPlay.playerId;
       game.tricks[winner] = (game.tricks[winner] || 0) + 1;
@@ -835,10 +835,16 @@ io.on('connection', (socket) => {
         playerName: game.players.find(p => p.id === winner).name,
         card: winningPlay.card
       };
-      
-      io.to(gameId).emit('gameStateUpdate', game);
+
+      // Emit state with winner before clearing
+      io.to(gameId).emit('gameStateUpdate', getGameState(game));
 
       setTimeout(() => {
+        // Clear locks for next trick
+        game.players.forEach(player => {
+          playerCardLocks.delete(`${gameId}-${player.id}`);
+        });
+
         game.currentTrick = [];
         game.leadSuit = null;
         game.trickWinner = null;
@@ -847,16 +853,7 @@ io.on('connection', (socket) => {
         // Check if round is over
         const totalTricks = Object.values(game.tricks).reduce((sum, count) => sum + count, 0);
         if (totalTricks === game.cardsPerPlayer) {
-          console.log('Round complete - All predictions and tricks:', {
-            predictions: game.predictions,
-            tricks: game.tricks,
-            cardsPerPlayer: game.cardsPerPlayer,
-            totalTricksPlayed: totalTricks
-          });
-
           calculateScores(game);
-
-          // Check if game is over or start new round
           if (game.roundNumber === 28) {
             game.phase = GAME_PHASES.GAME_OVER;
             game.message = 'Game Over!';
@@ -880,7 +877,7 @@ io.on('connection', (socket) => {
           game.currentPlayerName = game.players.find(p => p.id === winner).name;
         }
 
-        io.to(gameId).emit('gameStateUpdate', game);
+        io.to(gameId).emit('gameStateUpdate', getGameState(game));
       }, TRICK_DISPLAY_TIME);
     } else {
       // Move to next player
@@ -888,9 +885,10 @@ io.on('connection', (socket) => {
       const nextPlayerIndex = getNextPlayerIndex(currentPlayerIndex, game.players);
       game.currentPlayer = game.players[nextPlayerIndex].id;
       game.currentPlayerName = game.players[nextPlayerIndex].name;
+      
+      // Emit updated state
+      io.to(gameId).emit('gameStateUpdate', getGameState(game));
     }
-
-    io.to(gameId).emit('gameStateUpdate', game);
   });
 
   socket.on('setHighestBidder', ({ gameId, highestBidder }) => {
