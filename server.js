@@ -431,6 +431,65 @@ const startGame = (gameId) => {
   startNewRound(game);
 };
 
+// Add at the top with other utility functions
+const logGameEvent = (event, gameId, data) => {
+  console.log(JSON.stringify({
+    timestamp: new Date().toISOString(),
+    event,
+    gameId,
+    ...data
+  }));
+};
+
+const validateGameState = (game) => {
+  const playerIds = new Set(game.players.map(p => p.id));
+  const errors = [];
+
+  // Check all player references
+  if (game.currentPlayer && !playerIds.has(game.currentPlayer)) {
+    errors.push('Invalid currentPlayer reference');
+    const correctPlayer = game.players.find(p => p.name === game.currentPlayerName);
+    if (correctPlayer) {
+      game.currentPlayer = correctPlayer.id;
+    }
+  }
+
+  // Validate predictions
+  if (game.predictions) {
+    const invalidPredictions = Object.keys(game.predictions)
+      .filter(id => !playerIds.has(id));
+    invalidPredictions.forEach(oldId => {
+      const player = game.players.find(p => p.id === oldId);
+      if (player) {
+        game.predictions[player.id] = game.predictions[oldId];
+        delete game.predictions[oldId];
+      }
+    });
+  }
+
+  if (errors.length > 0) {
+    logGameEvent('gameStateValidation', game.gameId, {
+      errors,
+      phase: game.phase,
+      roundNumber: game.roundNumber
+    });
+  }
+  return game;
+};
+
+const recoverGameState = (game) => {
+  // If game is stuck in trump selection
+  if (game.phase === GAME_PHASES.SELECTING_TRUMP && !game.highestBidder) {
+    const highestBidder = getHighestBidder(game);
+    if (highestBidder) {
+      game.highestBidder = highestBidder;
+      game.currentPlayer = highestBidder;
+      game.currentPlayerName = game.players.find(p => p.id === highestBidder)?.name;
+    }
+  }
+  return game;
+};
+
 // Update socket connection handling
 io.on('connection', (socket) => {
   // Add rate limiting check
@@ -442,70 +501,111 @@ io.on('connection', (socket) => {
   const tabId = socket.handshake.auth.tabId;
   console.log(`User connected: ${socket.id}, Tab: ${tabId}`);
 
-  socket.on('rejoinGame', ({ gameId, playerName }) => {
-    const game = games.get(gameId);
-    if (!game) {
-      socket.emit('error', 'Game not found');
-      return;
-    }
+  socket.on('rejoinGame', async ({ gameId, playerName }) => {
+    logGameEvent('rejoinAttempt', gameId, { playerName, socketId: socket.id });
+    
+    try {
+      const game = games.get(gameId);
+      if (!game) {
+        socket.emit('error', 'Game not found');
+        return;
+      }
 
-    // Find player in disconnected players map
-    const oldSocketId = Array.from(disconnectedPlayers.entries())
-      .find(([_, info]) => info.playerName === playerName)?.[0];
+      // If the hand is already transferred to this socket, ignore duplicate rejoin
+      if (game.hands && game.hands[socket.id]) {
+        logGameEvent('rejoinIgnored', gameId, {
+          playerName,
+          socketId: socket.id,
+          reason: "already rejoined",
+          currentHand: game.hands[socket.id].length
+        });
+        // Send current state to ensure client is up to date
+        socket.join(gameId);
+        socket.emit('gameState', game);
+        socket.emit('dealCards', game.hands[socket.id]);
+        return;
+      }
 
-    if (oldSocketId) {
-      // Update player ID in current trick if present
-      if (game.currentTrick.length > 0) {
-        game.currentTrick = game.currentTrick.map(play => {
-          if (play.playerId === oldSocketId) {
-            return { ...play, playerId: socket.id };
+      // Find player in disconnected players map
+      const oldSocketId = Array.from(disconnectedPlayers.entries())
+        .find(([_, info]) => info.playerName === playerName)?.[0];
+
+      if (oldSocketId) {
+        // Update all state references
+        if (game.currentTrick.length > 0) {
+          game.currentTrick = game.currentTrick.map(play => {
+            if (play.playerId === oldSocketId) {
+              return { ...play, playerId: socket.id };
+            }
+            return play;
+          });
+        }
+
+        // Transfer all game state
+        ['predictions', 'hands', 'scores', 'plumps'].forEach(stateKey => {
+          if (game[stateKey]?.[oldSocketId] !== undefined) {
+            game[stateKey][socket.id] = game[stateKey][oldSocketId];
+            delete game[stateKey][oldSocketId];
+            logGameEvent('stateTransferred', gameId, {
+              playerName,
+              stateKey,
+              oldSocketId,
+              newSocketId: socket.id
+            });
           }
-          return play;
+        });
+
+        // Update player references
+        const playerIndex = game.players.findIndex(p => p.id === oldSocketId);
+        if (playerIndex !== -1) {
+          game.players[playerIndex].id = socket.id;
+          game.players[playerIndex].disconnected = false;
+        }
+
+        // Update game state references
+        if (game.currentPlayer === oldSocketId) {
+          game.currentPlayer = socket.id;
+          game.currentPlayerName = playerName;
+        }
+        if (game.highestBidder === oldSocketId) {
+          game.highestBidder = socket.id;
+        }
+
+        disconnectedPlayers.delete(oldSocketId);
+
+        // Validate and recover game state
+        const validatedGame = validateGameState(game);
+        const recoveredGame = recoverGameState(validatedGame);
+
+        // Rejoin room and sync state
+        socket.join(gameId);
+        socket.emit('gameState', recoveredGame);
+        socket.emit('dealCards', recoveredGame.hands[socket.id]);
+        
+        // Notify other players
+        io.to(gameId).emit('playerRejoined', { 
+          playerId: socket.id,
+          playerName 
+        });
+        
+        // Update all players
+        io.to(gameId).emit('gameStateUpdate', getGameState(recoveredGame));
+
+        logGameEvent('rejoinSuccess', gameId, {
+          playerName,
+          newSocketId: socket.id,
+          gamePhase: game.phase,
+          handRestored: !!game.hands[socket.id]
         });
       }
-
-      // Update predictions if they exist
-      if (game.predictions[oldSocketId] !== undefined) {
-        game.predictions[socket.id] = game.predictions[oldSocketId];
-        delete game.predictions[oldSocketId];
-      }
-
-      // Update player in game.players array
-      const playerIndex = game.players.findIndex(p => p.id === oldSocketId);
-      if (playerIndex !== -1) {
-        game.players[playerIndex].id = socket.id;
-      }
-
-      // Update any other game state references to the old socket ID
-      if (game.currentPlayer === oldSocketId) game.currentPlayer = socket.id;
-      if (game.highestBidder === oldSocketId) game.highestBidder = socket.id;
-      
-      // Transfer hands if they exist
-      if (game.hands[oldSocketId]) {
-        game.hands[socket.id] = game.hands[oldSocketId];
-        delete game.hands[oldSocketId];
-      }
-
-      // Transfer scores and plumps
-      if (game.scores[oldSocketId] !== undefined) {
-        game.scores[socket.id] = game.scores[oldSocketId];
-        delete game.scores[oldSocketId];
-      }
-      if (game.plumps[oldSocketId] !== undefined) {
-        game.plumps[socket.id] = game.plumps[oldSocketId];
-        delete game.plumps[oldSocketId];
-      }
-
-      disconnectedPlayers.delete(oldSocketId);
+    } catch (error) {
+      console.error('Error in rejoinGame:', error);
+      socket.emit('error', 'Failed to rejoin game');
+      logGameEvent('rejoinError', gameId, {
+        playerName,
+        error: error.message
+      });
     }
-
-    // Rejoin room and sync state
-    socket.join(gameId);
-    socket.emit('gameState', getGameState(game));
-    io.to(gameId).emit('playerRejoined', { 
-      playerId: socket.id,
-      playerName 
-    });
   });
 
   socket.on('heartbeat', ({ tabId }) => {
