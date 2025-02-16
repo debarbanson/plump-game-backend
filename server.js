@@ -443,55 +443,69 @@ io.on('connection', (socket) => {
   console.log(`User connected: ${socket.id}, Tab: ${tabId}`);
 
   socket.on('rejoinGame', ({ gameId, playerName }) => {
-    console.log(`Rejoin attempt - Game: ${gameId}, Player: ${playerName}`);
-    
     const game = games.get(gameId);
     if (!game) {
       socket.emit('error', 'Game not found');
       return;
     }
 
-    // Get disconnected player data by name instead of old socket ID
-    const disconnectedData = disconnectedPlayers.get(playerName);
-    const player = game.players.find(p => p.name === playerName);
-    
-    if (player && disconnectedData) {
-      const oldSocketId = player.id;
-      
-      // Update socket ID and connection status
-      player.id = socket.id;
-      player.disconnected = false;
-      
-      // Transfer all game state to new socket ID
-      game.hands[socket.id] = disconnectedData.gameState.hand;
-      game.predictions[socket.id] = disconnectedData.gameState.predictions;
-      game.tricks[socket.id] = disconnectedData.gameState.tricks;
-      game.scores[socket.id] = disconnectedData.gameState.scores;
-      game.plumps[socket.id] = disconnectedData.gameState.plumps;
+    // Find player in disconnected players map
+    const oldSocketId = Array.from(disconnectedPlayers.entries())
+      .find(([_, info]) => info.playerName === playerName)?.[0];
 
-      // If this was the current player, update currentPlayer
-      if (game.currentPlayer === oldSocketId) {
-        game.currentPlayer = socket.id;
+    if (oldSocketId) {
+      // Update player ID in current trick if present
+      if (game.currentTrick.length > 0) {
+        game.currentTrick = game.currentTrick.map(play => {
+          if (play.playerId === oldSocketId) {
+            return { ...play, playerId: socket.id };
+          }
+          return play;
+        });
       }
 
-      // Clean up old data
-      disconnectedPlayers.delete(playerName);
-      delete game.hands[oldSocketId];
-      delete game.predictions[oldSocketId];
-      delete game.tricks[oldSocketId];
-      delete game.scores[oldSocketId];
-      delete game.plumps[oldSocketId];
+      // Update predictions if they exist
+      if (game.predictions[oldSocketId] !== undefined) {
+        game.predictions[socket.id] = game.predictions[oldSocketId];
+        delete game.predictions[oldSocketId];
+      }
 
-      // Rejoin room and sync state
-      socket.join(gameId);
-      socket.emit('gameState', getGameState(game));
-      io.to(gameId).emit('playerRejoined', { 
-        playerId: socket.id,
-        playerName: player.name 
-      });
+      // Update player in game.players array
+      const playerIndex = game.players.findIndex(p => p.id === oldSocketId);
+      if (playerIndex !== -1) {
+        game.players[playerIndex].id = socket.id;
+      }
 
-      console.log(`Player ${playerName} successfully rejoined game ${gameId}`);
+      // Update any other game state references to the old socket ID
+      if (game.currentPlayer === oldSocketId) game.currentPlayer = socket.id;
+      if (game.highestBidder === oldSocketId) game.highestBidder = socket.id;
+      
+      // Transfer hands if they exist
+      if (game.hands[oldSocketId]) {
+        game.hands[socket.id] = game.hands[oldSocketId];
+        delete game.hands[oldSocketId];
+      }
+
+      // Transfer scores and plumps
+      if (game.scores[oldSocketId] !== undefined) {
+        game.scores[socket.id] = game.scores[oldSocketId];
+        delete game.scores[oldSocketId];
+      }
+      if (game.plumps[oldSocketId] !== undefined) {
+        game.plumps[socket.id] = game.plumps[oldSocketId];
+        delete game.plumps[oldSocketId];
+      }
+
+      disconnectedPlayers.delete(oldSocketId);
     }
+
+    // Rejoin room and sync state
+    socket.join(gameId);
+    socket.emit('gameState', getGameState(game));
+    io.to(gameId).emit('playerRejoined', { 
+      playerId: socket.id,
+      playerName 
+    });
   });
 
   socket.on('heartbeat', ({ tabId }) => {
@@ -830,9 +844,11 @@ io.on('connection', (socket) => {
       const winner = winningPlay.playerId;
       game.tricks[winner] = (game.tricks[winner] || 0) + 1;
 
+      // Add fallback for player name
+      const winningPlayer = game.players.find(p => p.id === winner);
       game.trickWinner = {
         playerId: winner,
-        playerName: game.players.find(p => p.id === winner).name,
+        playerName: winningPlayer ? winningPlayer.name : winningPlay.playerName,
         card: winningPlay.card
       };
 
